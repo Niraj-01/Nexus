@@ -13,7 +13,7 @@ import { withIdempotency } from "../lib/idempotency";
  * the new doc, calls Vertex text-embedding-004, and updates
  * embedding / embeddingVersion / embeddingStatus.
  */
-export const createResource = onCall(async (request) => {
+export const createResource = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Sign in required.");
   }

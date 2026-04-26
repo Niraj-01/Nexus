@@ -37,24 +37,67 @@
    - **Dhrupad** — Org type: `ORG`, Org name: `Dhrupad Manufacturing`, Region: `Panvel, MH`
 5. Submit. Your dashboard will now say **"Pending review"** — that's expected. Wait for A.2.
 
-## A.2 — Dhrupad: become admin and approve everyone
+## A.2 — Dhrupad: approve all three orgs (one command)
 
-**No CLI, no Firestore Console — everything happens on the site.**
+**Prerequisite:** All 3 of you have completed A.1. Each dashboard should
+show a yellow **"Pending review"** banner.
 
-`dhrupadrajpurohit@gmail.com` is hardcoded as the platform admin. On sign-in,
-the app self-bootstraps the `PLATFORM_ADMIN` custom claim via the
-`bootstrapPlatformAdmin` callable and refreshes the ID token in place.
+**Dhrupad does this. Niraj and Albin: just wait, then sign out and sign
+back in at the end.**
 
-**Dhrupad:**
+### Step 1 — One-time, only if you've never done this on this machine
 
-1. Make sure you signed up at A.1 with the Google account `dhrupadrajpurohit@gmail.com`. If you used the wrong account, sign out and sign in with the correct one.
-2. The app shell now shows an **"Admin · Pending orgs"** link in the top-right of any authenticated page. Click it (or visit **`<APP_URL>/admin/organizations`** directly).
-3. You'll see Niraj's and Albin's pending orgs. Click **Approve** on each.
-4. Each approval calls the `approveOrg` callable, which sets `status: ACTIVE` on the org and grants `{role: "ORG_ADMIN", orgId}` claims to every user in that org.
+```powershell
+firebase login
+```
 
-**Niraj and Albin** — once Dhrupad has approved you, **sign out and sign back in** to refresh your token. (Token refresh on the *current* session is automatic only for the user being modified; Niraj and Albin are in separate browser sessions, so they need a re-login.)
+(Sign in with `dhrupadrajpurohit@gmail.com`. Skip if you're already
+logged in — check with `firebase login:list`.)
 
-> **Troubleshooting** — if the Admin link doesn't appear after sign-in, refresh the page once. The callable is idempotent, so signing out and back in is always safe to retry.
+### Step 2 — Run the approve-all script
+
+In `c:/Solution Challange/nexus/`:
+
+```powershell
+npm run approve
+```
+
+Output looks like:
+
+```
+→ Approving all PENDING_REVIEW orgs against LIVE (buffet-493105)
+
+  Found 3 pending orgs:
+
+  ✓ Niraj Foundation              nirajvaidya32@gmail.com  →  {role:ORG_ADMIN, orgId}
+  ✓ Albin Capital                 albinvishwas7@gmail.com  →  {role:ORG_ADMIN, orgId}
+  ✓ Dhrupad Manufacturing         dhrupadrajpurohit@gmail.com  →  {role:PLATFORM_ADMIN, orgId}
+
+  3 approved, 0 failed.
+
+→ Done. Each approved user must sign out and sign back in to refresh their token.
+```
+
+Behind the scenes the script (`scripts/approveAll.ts`):
+- Lists every org with `status == "PENDING_REVIEW"`
+- Flips each to `ACTIVE`
+- Sets `{role, orgId}` custom claims on the owning user (`PLATFORM_ADMIN` for `dhrupadrajpurohit@gmail.com`, `ORG_ADMIN` for everyone else)
+- Idempotent — safe to re-run
+
+### Step 3 — Everyone signs out and signs back in
+
+All 3 of you: click **Profile** in the top-right → **Sign out** → sign back in with the same Google account. The yellow "Pending review" banner should be gone.
+
+You're ready for A.3.
+
+> **Why this can't be skipped:** Firebase ID tokens are issued at sign-in
+> and cached client-side. The script changes the server-side claims, but
+> only the next sign-in pulls fresh claims into the browser.
+
+> **Troubleshooting**
+> - `firebase: command not found` → `npm install -g firebase-tools` first.
+> - Script errors with `permission denied` → confirm you're project owner: `firebase login:list`.
+> - Some users still show "Pending review" after sign-out/sign-in → re-run `npm run approve` (idempotent), then sign out/in again.
 
 ## A.3 — Albin: list your FUNDS resource
 

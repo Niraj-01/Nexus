@@ -11,7 +11,7 @@ const InputSchema = z.object({
  * Platform Admin → sets org.status=ACTIVE and issues custom claims
  * (role, orgId) on the admin user of that org. Rules depend on these claims.
  */
-export const approveOrg = onCall(async (request) => {
+export const approveOrg = onCall({ cors: true }, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "sign in");
   if (request.auth.token.role !== "PLATFORM_ADMIN") {
     throw new HttpsError("permission-denied", "platform admin only");

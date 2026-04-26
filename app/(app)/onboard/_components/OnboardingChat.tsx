@@ -212,6 +212,7 @@ export function OnboardingChat({ type }: { type: OrgType | undefined }) {
       toast.success("Organization saved. We'll review your docs shortly.");
       router.replace("/dashboard");
     } catch (err) {
+      console.error("[finalizeOrg] write failed (chat path):", err);
       if (err instanceof OnboardingDataIncompleteError) {
         toast.error(`Still missing: ${err.missing.join(", ")} — let's finish that up.`);
         return;

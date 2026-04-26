@@ -37,7 +37,7 @@ export default function AppShellLayout({ children }: { children: ReactNode }) {
 
   const navLinks = [
     { name: "Dashboard", href: "/dashboard", icon: Home },
-    { name: "Tickets",   href: "/tickets",   icon: Ticket },
+    { name: "Tickets", href: "/tickets", icon: Ticket },
     { name: "Org Profile", href: "/profile", icon: User },
     ...(isAdmin ? [{ name: "Admin", href: "/admin/organizations", icon: Shield }] : []),
   ];
@@ -53,20 +53,15 @@ export default function AppShellLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="app-shell-top">
-      {/* ── Top Navigation Bar ── */}
       <header className="app-topnav">
         <div className="app-topnav-inner">
-
-          {/* Logo */}
           <Link href="/dashboard" className="app-topnav-logo">
             NEXUS<span className="home-logo-dot">.</span>
           </Link>
 
-          {/* Nav Links — desktop */}
           <nav className="app-topnav-links">
             {navLinks.map((link) => {
-              const isActive =
-                pathname === link.href || pathname.startsWith(link.href + "/");
+              const isActive = pathname === link.href || pathname.startsWith(link.href + "/");
               const Icon = link.icon;
               return (
                 <Link
@@ -81,9 +76,7 @@ export default function AppShellLayout({ children }: { children: ReactNode }) {
             })}
           </nav>
 
-          {/* Right side: user pill + hamburger */}
           <div className="app-topnav-right">
-            {/* User dropdown */}
             <div className="app-topnav-user-wrap">
               <button
                 className="app-topnav-user-btn"
@@ -93,7 +86,11 @@ export default function AppShellLayout({ children }: { children: ReactNode }) {
                 <span className="app-topnav-user-name">
                   {user.displayName ?? user.email?.split("@")[0] ?? "Account"}
                 </span>
-                <ChevronDown size={14} strokeWidth={2} className={`app-topnav-chevron${userMenuOpen ? " is-open" : ""}`} />
+                <ChevronDown
+                  size={14}
+                  strokeWidth={2}
+                  className={`app-topnav-chevron${userMenuOpen ? " is-open" : ""}`}
+                />
               </button>
 
               {userMenuOpen && (
@@ -113,7 +110,6 @@ export default function AppShellLayout({ children }: { children: ReactNode }) {
               )}
             </div>
 
-            {/* Hamburger — mobile only */}
             <button
               className="app-topnav-hamburger"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -124,12 +120,10 @@ export default function AppShellLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        {/* Mobile nav drawer */}
         {mobileMenuOpen && (
           <div className="app-topnav-mobile-menu">
             {navLinks.map((link) => {
-              const isActive =
-                pathname === link.href || pathname.startsWith(link.href + "/");
+              const isActive = pathname === link.href || pathname.startsWith(link.href + "/");
               const Icon = link.icon;
               return (
                 <Link
@@ -143,7 +137,11 @@ export default function AppShellLayout({ children }: { children: ReactNode }) {
               );
             })}
             <div className="app-topnav-dropdown-divider" style={{ margin: "8px 0" }} />
-            <button onClick={handleSignOut} className="app-topnav-mobile-link" style={{ color: "var(--color-muted)" }}>
+            <button
+              onClick={handleSignOut}
+              className="app-topnav-mobile-link"
+              style={{ color: "var(--color-muted)" }}
+            >
               <LogOut size={16} />
               Sign out
             </button>
@@ -151,7 +149,6 @@ export default function AppShellLayout({ children }: { children: ReactNode }) {
         )}
       </header>
 
-      {/* ── Page Content ── */}
       <main className="app-main-top">
         <div style={{ maxWidth: "1200px", margin: "0 auto", width: "100%", padding: "40px 24px" }}>
           {children}
@@ -160,3 +157,4 @@ export default function AppShellLayout({ children }: { children: ReactNode }) {
     </div>
   );
 }
+

@@ -114,6 +114,7 @@ export function OnboardingFormPage({ type }: { type: OrgType | undefined }) {
       toast.success("Organization saved.");
       router.replace("/dashboard");
     } catch (err) {
+      console.error("[finalizeOrg] write failed:", err);
       if (err instanceof OnboardingDataIncompleteError) {
         toast.error(`Missing: ${err.missing.join(", ")}`);
         return;

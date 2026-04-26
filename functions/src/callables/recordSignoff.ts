@@ -17,7 +17,7 @@ import { withIdempotency } from "../lib/idempotency";
  * close (all contributors APPROVED, none DISPUTED). App Check enforced;
  * idempotent via `withIdempotency`.
  */
-export const recordSignoff = onCall({ enforceAppCheck: true }, async (request) => {
+export const recordSignoff = onCall({ enforceAppCheck: true, cors: true }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Sign in required.");
   }
