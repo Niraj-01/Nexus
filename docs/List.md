@@ -12,7 +12,7 @@ own, and each one's outputs become the next one's inputs.
 - **FE** = Next.js route / component  • **BE** = Cloud Functions / rules
 - **DATA** = Firestore schema / indexes / seed  • **EXT** = external API
 
-Last updated: 2026-04-24
+Last updated: 2026-04-25
 
 ---
 
@@ -95,7 +95,7 @@ without embedded resources.
 - [x] BE trigger `onRapidTicketCreated` — [functions/src/triggers/onRapidTicketCreated.ts](../functions/src/triggers/onRapidTicketCreated.ts)
   - [x] Filter: `resource.emergencyContract.enabled === true`, category ∈ needs, geo reachable (haversine), org ACTIVE, host excluded
   - [x] Write `matches/{id}` with `rapidBroadcast: true` for every passing org (no K cutoff). No semantic ranking. Per-entity projection (`maxContributionPossible`, `contributionFeasibility`, `contributionImpactPct`, `geoDistanceKm`) included so the rapid card has the same UX as the normal card. *(If ranking is ever added to Flow B, weights lock to `0.7 semantic + 0.3 geo`.)*
-  - [ ] FCM push when `resource.emergencyContract.autoNotify === true` — deferred (needs FCM token plumbing)
+  - [-] FCM push when `resource.emergencyContract.autoNotify === true` — *deferred for demo cut (needs FCM token plumbing).*
 - EXT: FCM (deferred)
 
 **Dashboard:** (full layout + Active Tickets surface live in §2.10; this stub covers only the Recommended-side index)
@@ -105,11 +105,11 @@ without embedded resources.
 ### 2.3 Pledge → commit
 
 **Flow A — AGREEMENT_FIRST:**
-- [ ] FE ticket-detail `/tickets/[id]` with "Pledge" CTA per need
-- [ ] BE callable `pledge` (App Check enforced) — Flow A path: writes `contributions PROPOSED`, `agreements DRAFTED`, Google Docs template copy + placeholder fill, returns `googleDocUrl` — stub at [functions/src/callables/pledge.ts](../functions/src/callables/pledge.ts)
-- [ ] BE callable `signAgreement` — HOST then CONTRIBUTOR marks signature; status progresses `DRAFTED → HOST_SIGNED → FULLY_SIGNED` — stub at [functions/src/callables/signAgreement.ts](../functions/src/callables/signAgreement.ts)
-- [ ] BE trigger `onAgreementFullySigned` — contribution → COMMITTED, bump `needs[i].progressPct` + `ticket.progressPct`, append audit — stub at [functions/src/triggers/onAgreementFullySigned.ts](../functions/src/triggers/onAgreementFullySigned.ts)
-- [ ] EXT: Google Docs + Drive APIs (template copy + PDF export)
+- [-] FE ticket-detail `/tickets/[id]` with "Pledge" CTA per need — *deferred; Flow A collapsed onto PLEDGE_FIRST for demo cut. Pledge CTA now renders for both NORMAL + EMERGENCY tickets.*
+- [-] BE callable `pledge` Flow A path (Google Docs template copy) — *deferred; pledge.ts now takes the single PLEDGE_FIRST transaction for both urgencies.*
+- [-] BE callable `signAgreement` — *deferred per demo cut.*
+- [-] BE trigger `onAgreementFullySigned` — *deferred per demo cut. Audit-trail story moves to post-hoc agreements (§2.7 stretch).*
+- [-] EXT: Google Docs + Drive APIs — *deferred per demo cut.*
 
 **Flow B — PLEDGE_FIRST:**
 - [x] `pledge` callable Flow B branch — [functions/src/callables/pledge.ts](../functions/src/callables/pledge.ts). Asserts `ticket.rapid === true`, single transaction: rejects double-pledge from same org → writes `contributions/{id}` COMMITTED + commitPath PLEDGE_FIRST + bumps `needs[i].progressPct` + recomputes valuation-weighted `progressPct` + denorms aggregates. App Check enforced. Idempotent via `withIdempotency`.
@@ -118,32 +118,36 @@ without embedded resources.
 - [x] In the same transaction that flips a contribution → `COMMITTED`, bump `tickets.contributorCount` (FieldValue.increment) and union-add the contributor's orgId into `tickets.participantOrgIds[]` (FieldValue.arrayUnion). Wired in pledge.ts Flow B branch; Flow A `onAgreementFullySigned` will reuse the same denorm shape when implemented. The contributors strip on ticket detail derives `contributors = participantOrgIds.filter(id => id !== hostOrgId)`. — RUBRIC: Performance. [Albin Ticket spec §3.4 + Dashboard spec §3.2]
 
 ### 2.4 Host advances to EXECUTION
-- [ ] FE "Move to Execution" CTA (host-only)
-- [ ] BE callable `advancePhase` — Flow A floor 30%, Flow B no floor, writes `phase: "EXECUTION"`, `phaseChangedAt`, `advancedEarly` — stub at [functions/src/callables/advancePhase.ts](../functions/src/callables/advancePhase.ts)
-- [ ] FE: existing contributors notified via realtime listener on ticket doc
+- [x] FE "Move to Execution" CTA (host-only) — `HostLifecyclePanel` in [TicketDetail.tsx](../app/(app)/tickets/[id]/_components/TicketDetail.tsx)
+- [x] BE callable `advancePhase` — no floor (host owns the judgment per design choice); writes `phase`, `phaseChangedAt`, `advancedEarly = (progressPct < 100)`; batch-flips COMMITTED contributions → EXECUTED in same transaction — [functions/src/callables/advancePhase.ts](../functions/src/callables/advancePhase.ts)
+- [x] FE: existing contributors notified via realtime listener on ticket doc — already wired in [TicketDetail.tsx](../app/(app)/tickets/[id]/_components/TicketDetail.tsx)
+- [x] `callAdvancePhase` client wrapper — [lib/callables.ts](../lib/callables.ts)
 
 ### 2.5 Photo proofs
-- [ ] FE upload widget on ticket detail (host-only, EXECUTION only)
-- [ ] Storage signed-URL upload to `tickets/{ticketId}/photoProofs/`
-- [ ] BE trigger `onPhotoProofUploaded` — touches ticket liveness (recovers execution reliability decay) — stub at [functions/src/triggers/onPhotoProofUploaded.ts](../functions/src/triggers/onPhotoProofUploaded.ts); ALSO writes `tickets/{id}/updates/{updateId}` with `{ kind: "PHOTO_PROOF" | "STATUS_NOTE", caption, authorOrgId, createdAt }`. Builds the spec's "proof_updates" feed; Phase 3's public ticket page reads the same subcollection. — RUBRIC: Alignment (transparent attribution) + Innovation (auditable feed alongside the immutable hash chain). [Albin spec §3.6]
+- [x] FE upload widget on ticket detail (host-only, EXECUTION only) — file input in `HostLifecyclePanel`
+- [x] Storage upload to `tickets/{ticketId}/photoProofs/` via Firebase Storage SDK + Firestore doc write; storage rules already permit auth'd 20MB image uploads
+- [x] BE trigger `onPhotoProofUploaded` — bumps `lastUpdatedAt` and mirrors into `tickets/{id}/updates/{proofId}` for the §3.3 public-feed contract — [functions/src/triggers/onPhotoProofUploaded.ts](../functions/src/triggers/onPhotoProofUploaded.ts). *Reliability liveness recovery deferred per §2.8 cut.*
+- [x] `PhotoProofSchema` added — [lib/schemas/photoProof.ts](../lib/schemas/photoProof.ts)
+- [x] `firestore.rules` photoProofs create branch pins `uploaderOrgId == token.orgId`
 
 ### 2.6 Host closes execution → PENDING_SIGNOFF
-- [ ] FE "Execution Done" CTA (requires ≥1 photo proof)
-- [ ] `advancePhase` transitions `EXECUTION → PENDING_SIGNOFF`
+- [x] FE "Mark execution complete" CTA — `HostLifecyclePanel` in [TicketDetail.tsx](../app/(app)/tickets/[id]/_components/TicketDetail.tsx)
+- [x] `advancePhase` transitions `EXECUTION → PENDING_SIGNOFF` — reads `photoProofs.limit(1)` inside the txn; throws `failed-precondition` if empty
 
 ### 2.7 Signoffs
-- [ ] FE per-contributor signoff panel on ticket detail — APPROVE / DISPUTE
-- [ ] BE callable `recordSignoff` — writes `tickets/{id}/signoffs/{sid}` — stub at [functions/src/callables/recordSignoff.ts](../functions/src/callables/recordSignoff.ts)
-- [ ] BE trigger `onSignoffRecorded` — all APPROVED → `phase: "CLOSED"` (hands off to Phase 3); any DISPUTED → admin review — stub at [functions/src/triggers/onSignoffRecorded.ts](../functions/src/triggers/onSignoffRecorded.ts)
+- [x] FE per-contributor signoff panel on ticket detail — APPROVE / DISPUTE — `SignoffPanel` in [TicketDetail.tsx](../app/(app)/tickets/[id]/_components/TicketDetail.tsx)
+- [x] BE callable `recordSignoff` — txn: validates EXECUTED contribution exists, rejects double-signoff, writes signoff, flips contribution `EXECUTED → SIGNED_OFF` (or DISPUTED) — [functions/src/callables/recordSignoff.ts](../functions/src/callables/recordSignoff.ts)
+- [x] BE trigger `onSignoffRecorded` — txn: full coverage + all APPROVED → `phase: "CLOSED"` (hands off to §3.1); any DISPUTED → no-op (stays PENDING_SIGNOFF; demo cut has no admin queue) — [functions/src/triggers/onSignoffRecorded.ts](../functions/src/triggers/onSignoffRecorded.ts)
+- [x] `callRecordSignoff` client wrapper — [lib/callables.ts](../lib/callables.ts)
 
 **Flow B post-hoc agreements** (optional, not a gate):
 - [ ] BE callable `createPosthocAgreement` — generates record-keeping Google Doc for a PLEDGE_FIRST contribution — stub at [functions/src/callables/createPosthocAgreement.ts](../functions/src/callables/createPosthocAgreement.ts)
 
 ### 2.8 Reliability decay
-- [ ] BE scheduled `reliabilityDecaySweep` (hourly) — decay math per plan §3; rapid tickets **never** decay Agreement reliability — stub at [functions/src/scheduled/reliabilityDecaySweep.ts](../functions/src/scheduled/reliabilityDecaySweep.ts)
-- [ ] BE scheduled `stuckStageSweep` (every 30m) — admin-visible flags, no mutation — stub at [functions/src/scheduled/stuckStageSweep.ts](../functions/src/scheduled/stuckStageSweep.ts)
-- [ ] BE scheduled `emergencyExpirySweep` (every 15m) — auto-advance rapid tickets past deadline — stub at [functions/src/scheduled/emergencyExpirySweep.ts](../functions/src/scheduled/emergencyExpirySweep.ts)
-- [ ] Surface contributor reliability mini-bars (Agreement / Execution / Closure, 0–100) inline next to each contributor on the ticket-detail contributors strip. Re-uses Phase 3's org-profile reliability component. — RUBRIC: Innovation (reliability decay is the originality centerpiece — surface it everywhere it can be seen, not only on the org profile).
+- [-] BE scheduled `reliabilityDecaySweep` — *deferred for demo cut. Reliability scores are still consumed (badge multiplier in §3.1) but auto-decay is wired post-hackathon.*
+- [-] BE scheduled `stuckStageSweep` — deferred for demo cut.
+- [-] BE scheduled `emergencyExpirySweep` — deferred for demo cut.
+- [-] Reliability mini-bars on contributors strip — deferred for demo cut.
 
 ### 2.9 Ticket detail display contract
 
@@ -151,7 +155,7 @@ A single render of `/tickets/[id]` reads only: ticket doc + `needs[]` + `matches
 
 - [x] FE component `TicketDetail` — [app/(app)/tickets/[id]/_components/TicketDetail.tsx](../app/(app)/tickets/[id]/_components/TicketDetail.tsx). Renders: title; host name + NGO/ORG type tag; urgency pill (rapid only); location; phase tag; geoDistanceKm from match; per-need rows [required | fulfilled | remaining | progress bar]; **"Your contribution potential"** panel from match doc; PledgeForm CTA (Flow B only — Flow A degraded with explanatory copy); contributors strip with batched org-name hydration. (Reliability mini-bars + proof gallery + updates feed deferred to §2.8 / §2.5 slices.)
 - [x] Empty/edge states per spec §9: "Your contribution potential" hidden when viewer is host or has no match doc; PledgeForm hidden when already pledged or wrong phase; "ticket not found" card with back-to-dashboard.
-- [ ] axe DevTools clean — keyboard nav, semantic landmarks, AA contrast on urgency tag and progress bars. — RUBRIC: UX/Accessibility. (Not yet manually verified — basic semantic markup is in place.)
+- [-] axe DevTools clean — *deferred for demo cut.*
 - [x] FE component [PledgeForm](../app/(app)/tickets/[id]/_components/PledgeForm.tsx) — defaults to match's `bestNeedIndex` + `maxContributionPossible` for one-click pledge; calls `callPledge`; toasts result; idempotent via stable per-mount requestId.
 
 ### 2.10 Dashboard display contract
@@ -205,8 +209,11 @@ rubric's Alignment 25% story — visible impact, transparent attribution.
 Depends on Phase 2: no badges without closed tickets.
 
 ### 3.1 Trigger: onTicketClosed
-- [ ] BE trigger `onTicketClosed` — one `badges/{id}` per participant (host + each COMMITTED contributor); also pushes `badgeRef` into `organizations.badges[]`; revalidates Next.js SSR for `/`, `/ticket/[id]`, `/org/[slug]` — stub at [functions/src/triggers/onTicketClosed.ts](../functions/src/triggers/onTicketClosed.ts)
-- [ ] `publicSlug` generator (URL-safe from org + ticket title + short hash)
+- [x] BE trigger `onTicketClosed` — one deterministic `badges/{ticketId__orgId}` per participant (host + each SIGNED_OFF contributor); pushes `BadgeRef` into `organizations.badges[]` via `arrayUnion` (idempotent on retry) — [functions/src/triggers/onTicketClosed.ts](../functions/src/triggers/onTicketClosed.ts)
+- [x] `publicSlug` generated inline from `slugify(title) + ticketId.slice(0,6)` — no separate util needed
+- [x] `BadgeSchema` added — [lib/schemas/badge.ts](../lib/schemas/badge.ts) (full doc shape; `BadgeRefSchema` already existed for the org-side embed)
+- [x] Reliability multiplier on badges — `scorePct = proportionalSharePct × reliabilityScore(org)`; reuses [functions/src/lib/matching.ts](../functions/src/lib/matching.ts) `reliabilityScore`. *Note: orgs default to ~0.7 — seed-tune in `scripts/seed.ts` for varied demo numbers.*
+- [-] Next.js SSR revalidation — *deferred for demo cut; public feed (§3.2) is not yet built.*
 
 ### 3.2 Public home feed — `/`
 - [ ] FE replace the current Next.js starter at [app/page.tsx](../app/page.tsx)
@@ -251,7 +258,7 @@ Depends on Phase 2: no badges without closed tickets.
 
 - [x] **Idempotency** — `requestId` on every mutating callable; dedup via `idempotency/{uid}__{requestId}` — [functions/src/lib/idempotency.ts](../functions/src/lib/idempotency.ts)
   - [ ] TTL policy on `idempotency/*` (24h) — configure in console
-- [ ] **Audit log** — hash-chained `onWrite` trigger across `tickets`, `contributions`, `agreements`, `organizations`, `signoffs` — stub at [functions/src/triggers/appendAuditLog.ts](../functions/src/triggers/appendAuditLog.ts); needs the prevHash implementation
+- [-] **Audit log** — hash-chained `onWrite` trigger — *deferred for demo cut; trigger fires but does not yet write hashed entries.*
 - [x] **App Check** — `enforceAppCheck: true` on `pledge` callable — [functions/src/callables/pledge.ts](../functions/src/callables/pledge.ts)
   - [ ] Register reCAPTCHA Enterprise site key in console and fill `NEXT_PUBLIC_APP_CHECK_SITE_KEY`
 - [x] **Rules** — 31 unit tests lock all money-like fields — [tests/rules/](../tests/rules/)

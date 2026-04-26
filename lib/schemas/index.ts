@@ -7,3 +7,5 @@ export * from "./contribution";
 export * from "./agreement";
 export * from "./signoff";
 export * from "./onboarding";
+export * from "./photoProof";
+export * from "./badge";

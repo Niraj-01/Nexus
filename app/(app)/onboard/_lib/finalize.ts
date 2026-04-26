@@ -86,9 +86,13 @@ export async function finalizeOrg(
     // to these; server fills reliability on approveOrg.
   });
 
+  // Only attach orgId — do NOT overwrite role. ensureUserDoc already set
+  // role on first sign-in, and platform admins (bootstrapPlatformAdmin) may
+  // have upgraded it to PLATFORM_ADMIN. Stomping role here would later cause
+  // approveOrg to demote them back to ORG_ADMIN when they approve their own org.
   batch.set(
     doc(db, "users", uid),
-    { orgId: uid, role: "ORG_ADMIN", updatedAt: Date.now() },
+    { orgId: uid, updatedAt: Date.now() },
     { merge: true },
   );
 

@@ -29,15 +29,18 @@ export const approveOrg = onCall(async (request) => {
 
   await orgRef.update({ status: "ACTIVE", approvedAt: Date.now() });
 
-  // Set custom claims on every ORG_ADMIN user of this org.
+  // Set custom claims on every member of this org. Auth claims are the source
+  // of truth for role — read existing claims and preserve PLATFORM_ADMIN if
+  // present, so a platform admin who is also an ORG_ADMIN of their own org
+  // (e.g. Dhrupad in DRY_RUN) keeps both powers after approving themselves.
   const users = await db.collection("users").where("orgId", "==", orgId).get();
   await Promise.all(
-    users.docs.map((u) =>
-      admin.auth().setCustomUserClaims(u.id, {
-        role: u.data().role ?? "ORG_ADMIN",
-        orgId,
-      }),
-    ),
+    users.docs.map(async (u) => {
+      const authUser = await admin.auth().getUser(u.id);
+      const existingRole = (authUser.customClaims?.role as string | undefined) ?? null;
+      const role = existingRole === "PLATFORM_ADMIN" ? "PLATFORM_ADMIN" : "ORG_ADMIN";
+      await admin.auth().setCustomUserClaims(u.id, { role, orgId });
+    }),
   );
 
   return { ok: true, orgId, affectedUsers: users.size };

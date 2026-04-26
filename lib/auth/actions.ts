@@ -10,7 +10,9 @@ import {
 } from "firebase/auth";
 import { FirebaseError } from "firebase/app";
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
-import { auth, db, googleProvider } from "@/lib/firebase/client";
+import { httpsCallable } from "firebase/functions";
+import { auth, db, functions, googleProvider } from "@/lib/firebase/client";
+import { isPlatformAdminEmail } from "@/lib/auth/adminEmails";
 
 /** Ensure users/{uid} exists. Called after every sign-in. */
 async function ensureUserDoc(cred: UserCredential) {
@@ -33,6 +35,19 @@ async function ensureUserDoc(cred: UserCredential) {
     }
 
     console.warn("Unable to sync users/{uid} during sign-in", err);
+  }
+
+  // Self-bootstrap PLATFORM_ADMIN claim for allowlisted emails. Server-side
+  // callable re-verifies the email; client gate just avoids needless calls.
+  // Idempotent — returns { alreadyAdmin: true } on subsequent sign-ins.
+  if (isPlatformAdminEmail(cred.user.email)) {
+    try {
+      const fn = httpsCallable(functions, "bootstrapPlatformAdmin");
+      await fn({});
+      await cred.user.getIdToken(true); // refresh claims into the current session
+    } catch (err) {
+      console.warn("[auth] bootstrapPlatformAdmin failed; sign in again to retry", err);
+    }
   }
 }
 

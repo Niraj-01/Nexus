@@ -90,3 +90,15 @@ export const RaiseTicketInputSchema = z.object({
   requestId: z.string().min(8),
 });
 export type RaiseTicketInput = z.infer<typeof RaiseTicketInputSchema>;
+
+/**
+ * Host-only phase advance. Two legal targets per the lifecycle state machine:
+ * OPEN_FOR_CONTRIBUTIONS → EXECUTION (no progress floor — host owns the
+ * judgment), and EXECUTION → PENDING_SIGNOFF (requires ≥1 photo proof).
+ */
+export const AdvancePhaseInputSchema = z.object({
+  ticketId: z.string().min(1),
+  target: z.enum(["EXECUTION", "PENDING_SIGNOFF"]),
+  requestId: z.string().min(8),
+});
+export type AdvancePhaseInput = z.infer<typeof AdvancePhaseInputSchema>;

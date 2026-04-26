@@ -22,16 +22,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // App Check must initialize on the client before any secured call.
     getAppCheckClient();
 
+    // onIdTokenChanged fires on sign-in/out AND token refresh, so claims set
+    // by bootstrapPlatformAdmin (which calls getIdToken(true)) flow into state
+    // without requiring a sign-out/sign-in cycle.
     const unsub = onIdTokenChanged(auth, async (u) => {
       try {
+        setUser(u);
         if (!u) {
-          setUser(null);
           setClaims(null);
           return;
         }
 
         const tokenResult = await u.getIdTokenResult();
-        setUser(u);
         setClaims({
           role: tokenResult.claims.role as string | undefined,
           orgId: tokenResult.claims.orgId as string | undefined,

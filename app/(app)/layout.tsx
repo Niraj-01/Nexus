@@ -1,15 +1,15 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { auth } from "@/lib/firebase/client";
 import { signOut as firebaseSignOut } from "firebase/auth";
-import Link from "next/link";
-import { Home, Ticket, User, LogOut, ChevronDown, Menu, X } from "lucide-react";
+import { Home, Ticket, User, LogOut, ChevronDown, Menu, X, Shield } from "lucide-react";
 
 export default function AppShellLayout({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, claims } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -33,10 +33,13 @@ export default function AppShellLayout({ children }: { children: ReactNode }) {
     );
   }
 
+  const isAdmin = claims?.role === "PLATFORM_ADMIN";
+
   const navLinks = [
     { name: "Dashboard", href: "/dashboard", icon: Home },
     { name: "Tickets",   href: "/tickets",   icon: Ticket },
     { name: "Org Profile", href: "/profile", icon: User },
+    ...(isAdmin ? [{ name: "Admin", href: "/admin/organizations", icon: Shield }] : []),
   ];
 
   const handleSignOut = async () => {

@@ -197,8 +197,11 @@ service cloud.firestore {
         // Authenticated: any signed-in user can see proofs on open tickets.
         allow read: if isSignedIn();
 
+        // Host-org member only, with `uploaderOrgId` pinned to the caller so
+        // the trigger can trust it without a re-read.
         allow create: if isSignedIn()
-          && isOrgMember(get(/databases/$(database)/documents/tickets/$(ticketId)).data.hostOrgId);
+          && isOrgMember(get(/databases/$(database)/documents/tickets/$(ticketId)).data.hostOrgId)
+          && request.resource.data.uploaderOrgId == request.auth.token.orgId;
 
         allow write: if isPlatformAdmin();
       }

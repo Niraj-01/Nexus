@@ -34,6 +34,7 @@ export { emergencyExpirySweep } from "./scheduled/emergencyExpirySweep";
 
 // Callables
 export { approveOrg } from "./callables/approveOrg";
+export { bootstrapPlatformAdmin } from "./callables/bootstrapPlatformAdmin";
 export { raiseTicket } from "./callables/raiseTicket";
 export { createResource } from "./callables/createResource";
 export { pledge } from "./callables/pledge";

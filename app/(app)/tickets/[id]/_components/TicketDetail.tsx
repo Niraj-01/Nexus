@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
+  addDoc,
   collection,
   doc,
   documentId,
@@ -11,9 +12,18 @@ import {
   query,
   where,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase/client";
+import { ref as storageRef, uploadBytes } from "firebase/storage";
+import { toast } from "sonner";
+import { db, storage } from "@/lib/firebase/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { callAdvancePhase, callRecordSignoff } from "@/lib/callables";
+import { authErrorToMessage } from "@/lib/auth/errors";
 import { PledgeForm } from "./PledgeForm";
+
+function randomRequestId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 interface TicketDoc {
   hostOrgId: string;
@@ -355,6 +365,16 @@ export function TicketDetail({ ticketId }: { ticketId: string }) {
         </div>
       )}
 
+      {/* Host lifecycle controls */}
+      {isHost && (
+        <HostLifecyclePanel ticketId={ticketId} ticket={ticket} />
+      )}
+
+      {/* Contributor signoff panel */}
+      {!isHost && myContribution && ticket.phase === "PENDING_SIGNOFF" && myContribution.status === "EXECUTED" && (
+        <SignoffPanel ticketId={ticketId} />
+      )}
+
       {/* Contributors strip */}
       {contributorOrgIds.length > 0 && (
         <section className="stack-sm">
@@ -395,22 +415,193 @@ function PledgeCTA({
 }) {
   if (alreadyPledged) return null;
   if (ticket.phase !== "OPEN_FOR_CONTRIBUTIONS") return null;
-  if (!ticket.rapid) {
-    return (
-      <div className="card" style={{ background: "var(--color-surface-2, #f6f7f9)" }}>
-        <p className="muted-text" style={{ margin: 0, fontSize: 14 }}>
-          Agreement-first pledging arrives with the Google Docs integration.
-          Emergency tickets accept instant pledges today.
-        </p>
-      </div>
-    );
-  }
   return (
     <PledgeForm
       ticketId={ticketId}
       needs={ticket.needs}
       match={match}
     />
+  );
+}
+
+function HostLifecyclePanel({
+  ticketId,
+  ticket,
+}: {
+  ticketId: string;
+  ticket: TicketDoc;
+}) {
+  const { claims } = useAuth();
+  const orgId = claims?.orgId ?? null;
+  const [busy, setBusy] = useState(false);
+  const [proofBusy, setProofBusy] = useState(false);
+  const requestId = useMemo(randomRequestId, [ticket.phase]);
+
+  async function advance(target: "EXECUTION" | "PENDING_SIGNOFF") {
+    setBusy(true);
+    try {
+      const res = await callAdvancePhase({ ticketId, target, requestId });
+      toast.success(`Phase: ${res.phase}`);
+    } catch (err) {
+      toast.error(authErrorToMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadProof(file: File) {
+    if (!orgId) {
+      toast.error("Missing org claim — try signing out and back in.");
+      return;
+    }
+    setProofBusy(true);
+    try {
+      const ext = file.name.includes(".") ? file.name.split(".").pop() : "bin";
+      const filename = `${randomRequestId()}.${ext}`;
+      const path = `tickets/${ticketId}/photoProofs/${filename}`;
+      await uploadBytes(storageRef(storage, path), file, { contentType: file.type });
+      await addDoc(collection(db, "tickets", ticketId, "photoProofs"), {
+        uploaderOrgId: orgId,
+        storagePath: path,
+        caption: "",
+        contentType: file.type,
+        size: file.size,
+        createdAt: Date.now(),
+      });
+      toast.success("Photo proof uploaded.");
+    } catch (err) {
+      toast.error(authErrorToMessage(err));
+    } finally {
+      setProofBusy(false);
+    }
+  }
+
+  if (ticket.phase === "OPEN_FOR_CONTRIBUTIONS") {
+    return (
+      <div className="card stack-sm">
+        <strong>Host controls</strong>
+        <p className="muted-text" style={{ margin: 0, fontSize: 13 }}>
+          When contributions look sufficient, advance the ticket to execution.
+          {ticket.progressPct < 100 && " You're below 100% — `advancedEarly` will be flagged."}
+        </p>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => advance("EXECUTION")}
+          disabled={busy}
+        >
+          {busy ? "Advancing…" : "Move to execution"}
+        </button>
+      </div>
+    );
+  }
+
+  if (ticket.phase === "EXECUTION") {
+    return (
+      <div className="card stack-sm">
+        <strong>Host controls — execution</strong>
+        <p className="muted-text" style={{ margin: 0, fontSize: 13 }}>
+          Upload at least one photo proof, then mark execution complete.
+        </p>
+        <input
+          type="file"
+          accept="image/*"
+          disabled={proofBusy}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void uploadProof(f);
+            e.target.value = "";
+          }}
+        />
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => advance("PENDING_SIGNOFF")}
+          disabled={busy}
+        >
+          {busy ? "Advancing…" : "Mark execution complete"}
+        </button>
+      </div>
+    );
+  }
+
+  if (ticket.phase === "PENDING_SIGNOFF") {
+    return (
+      <div className="card stack-sm">
+        <strong>Awaiting contributor signoffs</strong>
+        <p className="muted-text" style={{ margin: 0, fontSize: 13 }}>
+          The ticket closes automatically once every contributor has approved.
+        </p>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function SignoffPanel({ ticketId }: { ticketId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [showDispute, setShowDispute] = useState(false);
+  const [note, setNote] = useState("");
+  const requestId = useMemo(randomRequestId, []);
+
+  async function submit(decision: "APPROVED" | "DISPUTED") {
+    setBusy(true);
+    try {
+      await callRecordSignoff({ ticketId, decision, note, requestId });
+      toast.success(decision === "APPROVED" ? "Delivery confirmed." : "Dispute recorded.");
+    } catch (err) {
+      toast.error(authErrorToMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card stack-sm" style={{ borderColor: "var(--color-accent, #2563eb)" }}>
+      <strong>Sign off on this delivery</strong>
+      <p className="muted-text" style={{ margin: 0, fontSize: 13 }}>
+        Confirm what the host delivered, or flag a dispute for admin review.
+      </p>
+      {showDispute && (
+        <textarea
+          className="textarea"
+          placeholder="Why are you disputing? (optional)"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          disabled={busy}
+        />
+      )}
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => submit("APPROVED")}
+          disabled={busy}
+        >
+          {busy ? "Submitting…" : "Confirm delivery"}
+        </button>
+        {!showDispute ? (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => setShowDispute(true)}
+            disabled={busy}
+          >
+            Dispute
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => submit("DISPUTED")}
+            disabled={busy}
+          >
+            Submit dispute
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

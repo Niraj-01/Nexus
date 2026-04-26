@@ -5,12 +5,11 @@ import { PledgeInputSchema } from "../lib/schemas";
 import { withIdempotency } from "../lib/idempotency";
 
 /**
- * Pledge to a ticket need. Branches on `tickets/{id}.rapid`:
- *   - rapid=true  → PLEDGE_FIRST: single transaction commits contribution +
- *                   bumps progress + denormalizes ticket aggregates.
- *   - rapid=false → AGREEMENT_FIRST: blocked behind Google Docs template
- *                   provisioning (List.md "Blockers"). Returns a clear
- *                   `failed-precondition` so the UI can degrade.
+ * Pledge to a ticket need. Single PLEDGE_FIRST path for both NORMAL and
+ * EMERGENCY tickets in the demo cut — Flow A AGREEMENT_FIRST (Google Docs
+ * chain) is deferred per List.md §2.3. Single transaction commits the
+ * contribution, bumps need + ticket progress, and denormalizes the
+ * participantOrgIds + contributorCount aggregates.
  *
  * App Check enforced (plan §A.4). Idempotent via `withIdempotency`.
  */
@@ -63,14 +62,6 @@ export const pledge = onCall({ enforceAppCheck: true }, async (request) => {
         throw new HttpsError(
           "failed-precondition",
           `Ticket is not accepting pledges (phase: ${ticket.phase}).`,
-        );
-      }
-
-      // Flow A is gated until Google Docs is provisioned.
-      if (ticket.rapid !== true) {
-        throw new HttpsError(
-          "failed-precondition",
-          "Agreement-first pledging isn't wired yet — emergency tickets only for now.",
         );
       }
 
