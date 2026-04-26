@@ -36,8 +36,8 @@ export default function SignupPage() {
     setBusy(true);
     try {
       await signUpEmail(values.email, values.password);
-      toast.success("Account created. Let's set up your organization.");
-      router.push("/onboard");
+      toast.success("Account created.");
+      router.push("/dashboard");
     } catch (err) {
       toast.error(authErrorToMessage(err));
     } finally {
@@ -49,8 +49,8 @@ export default function SignupPage() {
     setBusy(true);
     try {
       await signInGoogle();
-      toast.success("Signed in. Let's set up your organization.");
-      router.push("/onboard");
+      toast.success("Signed in.");
+      router.push("/dashboard");
     } catch (err) {
       toast.error(authErrorToMessage(err));
     } finally {

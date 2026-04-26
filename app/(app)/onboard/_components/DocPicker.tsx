@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import type { OrgType } from "@/lib/schemas";
 import type { DocType, DocsByType, UploadedDoc } from "../_lib/types";
 import { uploadDocPhoto } from "../_lib/uploadDoc";
+import { requiredDocs } from "@/lib/onboarding/requirements";
 
 const LABELS: Record<DocType, string> = {
   PAN: "PAN card",
@@ -15,12 +16,6 @@ const LABELS: Record<DocType, string> = {
   GST: "GST registration",
   CIN: "CIN",
 };
-
-function requiredDocs(type: OrgType | undefined): DocType[] {
-  if (type === "NGO") return ["PAN", "REG_CERT", "80G", "12A"];
-  if (type === "ORG") return ["PAN", "REG_CERT", "GST", "CIN"];
-  return ["PAN", "REG_CERT"];
-}
 
 type Props = {
   open: boolean;

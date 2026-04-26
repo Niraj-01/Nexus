@@ -37,67 +37,52 @@
    - **Dhrupad** — Org type: `ORG`, Org name: `Dhrupad Manufacturing`, Region: `Panvel, MH`
 5. Submit. Your dashboard will now say **"Pending review"** — that's expected. Wait for A.2.
 
-## A.2 — Dhrupad: approve all three orgs (one command)
+## A.2 — Dhrupad: approve all three orgs from `/admin`
 
 **Prerequisite:** All 3 of you have completed A.1. Each dashboard should
 show a yellow **"Pending review"** banner.
 
-**Dhrupad does this. Niraj and Albin: just wait, then sign out and sign
-back in at the end.**
+**Dhrupad does this. Niraj and Albin: just wait — your dashboard will
+flip from "Pending review" to live within a second of being approved.
+No sign-out, no refresh.**
 
-### Step 1 — One-time, only if you've never done this on this machine
+### Step 1 — Open the admin page
 
-```powershell
-firebase login
-```
+Dhrupad: navigate to **`<APP_URL>/admin`**. (No link from anywhere else
+in the app — type the URL.)
 
-(Sign in with `dhrupadrajpurohit@gmail.com`. Skip if you're already
-logged in — check with `firebase login:list`.)
+### Step 2 — Sign in with Google
 
-### Step 2 — Run the approve-all script
+Click **Sign in with Google** → pick `dhrupadrajpurohit@gmail.com`.
+The page bootstraps your `PLATFORM_ADMIN` claim automatically (you'll
+see "setting up admin claim…" briefly), then shows pending orgs live.
 
-In `c:/Solution Challange/nexus/`:
+If you sign in with any other account: you'll see "Access denied" —
+sign out, try again with the right account.
 
-```powershell
-npm run approve
-```
+### Step 3 — Approve each pending org
 
-Output looks like:
+Three cards: **Niraj Foundation**, **Albin Capital**, **Dhrupad
+Manufacturing**. Click **Approve** on each. Cards disappear as the
+status flips. Each click takes ~1-2s.
 
-```
-→ Approving all PENDING_REVIEW orgs against LIVE (buffet-493105)
+The `/admin` page lists pending orgs **live** via Firestore
+subscription — if Niraj submits onboarding while you're already on
+the page, his org pops in without a refresh.
 
-  Found 3 pending orgs:
+### That's it
 
-  ✓ Niraj Foundation              nirajvaidya32@gmail.com  →  {role:ORG_ADMIN, orgId}
-  ✓ Albin Capital                 albinvishwas7@gmail.com  →  {role:ORG_ADMIN, orgId}
-  ✓ Dhrupad Manufacturing         dhrupadrajpurohit@gmail.com  →  {role:PLATFORM_ADMIN, orgId}
+- **Niraj and Albin:** your dashboard will auto-transition from "Pending review" to live within a second of being approved. The browser detects the status change and refreshes your ID token in place — no sign-out needed.
+- Continue with A.3.
 
-  3 approved, 0 failed.
-
-→ Done. Each approved user must sign out and sign back in to refresh their token.
-```
-
-Behind the scenes the script (`scripts/approveAll.ts`):
-- Lists every org with `status == "PENDING_REVIEW"`
-- Flips each to `ACTIVE`
-- Sets `{role, orgId}` custom claims on the owning user (`PLATFORM_ADMIN` for `dhrupadrajpurohit@gmail.com`, `ORG_ADMIN` for everyone else)
-- Idempotent — safe to re-run
-
-### Step 3 — Everyone signs out and signs back in
-
-All 3 of you: click **Profile** in the top-right → **Sign out** → sign back in with the same Google account. The yellow "Pending review" banner should be gone.
-
-You're ready for A.3.
-
-> **Why this can't be skipped:** Firebase ID tokens are issued at sign-in
-> and cached client-side. The script changes the server-side claims, but
-> only the next sign-in pulls fresh claims into the browser.
+> **Backup CLI flow:** if `/admin` is down for any reason, you can run
+> `npm run approve` from `nexus/` (after `firebase login`). It does the
+> same thing as the page. See [scripts/approveAll.ts](../scripts/approveAll.ts).
 
 > **Troubleshooting**
-> - `firebase: command not found` → `npm install -g firebase-tools` first.
-> - Script errors with `permission denied` → confirm you're project owner: `firebase login:list`.
-> - Some users still show "Pending review" after sign-out/sign-in → re-run `npm run approve` (idempotent), then sign out/in again.
+> - "Access denied" but you signed in as Dhrupad → check the Google account picker; you may have picked the wrong one. Sign out and try again.
+> - Bootstrap errors → check Firebase Console → App Hosting → backend `nexus` → Logs for the `/api/admin/bootstrap` route.
+> - Approved org's user still sees "Pending review" 5+ seconds after approval → manually refresh their browser tab (the auto-refresh effect should run but may have hit a transient error).
 
 ## A.3 — Albin: list your FUNDS resource
 

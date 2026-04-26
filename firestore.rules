@@ -78,6 +78,17 @@ service cloud.firestore {
         && !('reliability' in request.resource.data.diff(resource.data).affectedKeys())
         && !('badges' in request.resource.data.diff(resource.data).affectedKeys());
 
+      // Self-update branch: a signed-in user editing their OWN org BEFORE
+      // custom claims are set (orgId == uid in the self-onboard scheme,
+      // but the orgId claim isn't issued until approveOrg runs). Same
+      // constraints as the regular update — status, reliability, badges
+      // are server-only.
+      allow update: if isSignedIn()
+        && orgId == request.auth.uid
+        && !('status' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('reliability' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('badges' in request.resource.data.diff(resource.data).affectedKeys());
+
       // Platform admin can read/write all.
       allow write: if isPlatformAdmin();
     }

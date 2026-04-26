@@ -7,6 +7,8 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import type { OnboardingData, OrgType } from "@/lib/schemas";
 import type { DocsByType, DocType, UploadedDoc } from "../_lib/types";
@@ -14,6 +16,7 @@ import { clearSession, loadSession, saveSession } from "../_lib/sessionStore";
 import { finalizeOrg, OnboardingDataIncompleteError } from "../_lib/finalize";
 import { DocPicker } from "./DocPicker";
 import { uploadDocPhoto } from "../_lib/uploadDoc";
+import { requiredDocs } from "@/lib/onboarding/requirements";
 
 const Schema = z.object({
   legalName: z.string().min(1, "Required"),
@@ -34,12 +37,6 @@ const DOC_LABEL: Record<DocType, string> = {
   CIN: "CIN",
 };
 
-function requiredDocs(type: OrgType | undefined): DocType[] {
-  if (type === "NGO") return ["PAN", "REG_CERT", "80G", "12A"];
-  if (type === "ORG") return ["PAN", "REG_CERT", "GST", "CIN"];
-  return ["PAN", "REG_CERT"];
-}
-
 export function OnboardingFormPage({ type }: { type: OrgType | undefined }) {
   const { user } = useAuth();
   const router = useRouter();
@@ -48,6 +45,10 @@ export function OnboardingFormPage({ type }: { type: OrgType | undefined }) {
   const [sessionId, setSessionId] = useState("");
   const [partialData, setPartialData] = useState<OnboardingData>({});
   const [docs, setDocs] = useState<DocsByType>({});
+  // Firestore-committed type — the immutable source of truth for an
+  // already-onboarded user. When set, it overrides any ?type= URL param
+  // so that hand-crafted URLs can't switch the org type.
+  const [existingOrgType, setExistingOrgType] = useState<OrgType | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busyType, setBusyType] = useState<DocType | null>(null);
@@ -58,23 +59,83 @@ export function OnboardingFormPage({ type }: { type: OrgType | undefined }) {
   });
 
   useEffect(() => {
-    const seed: Partial<OnboardingData> = type ? { type } : {};
-    const loaded = loadSession(seed);
-    setSessionId(loaded.sessionId);
-    setPartialData(loaded.partialData);
-    setDocs(loaded.docs);
-    form.reset({
-      legalName: loaded.partialData.legalName ?? "",
-      email: loaded.partialData.email ?? "",
-      phone: loaded.partialData.phone ?? "",
-      adminRegion: loaded.partialData.geo?.adminRegion ?? "",
-      lat: typeof loaded.partialData.geo?.lat === "number" ? loaded.partialData.geo.lat : 0,
-      lng: typeof loaded.partialData.geo?.lng === "number" ? loaded.partialData.geo.lng : 0,
-    });
-    setBooted(true);
-  }, [type, form]);
+    let cancelled = false;
+    async function init() {
+      const seed: Partial<OnboardingData> = type ? { type } : {};
+      let firestorePartial: Partial<OnboardingData> = {};
+      let firestoreDocs: DocsByType = {};
 
-  const effectiveType = type ?? partialData.type;
+      // Returning user? Load their existing org from Firestore so they can
+      // edit text fields / add missing documents without re-typing everything.
+      if (user) {
+        try {
+          const orgSnap = await getDoc(doc(db, "organizations", user.uid));
+          if (orgSnap.exists()) {
+            const o = orgSnap.data() as Record<string, unknown>;
+            const rawType = o.type;
+            const committedType: OrgType | null =
+              rawType === "NGO" || rawType === "ORG" ? rawType : null;
+            if (!cancelled && committedType) setExistingOrgType(committedType);
+            const geo = o.geo as
+              | { lat?: number; lng?: number; adminRegion?: string; operatingAreas?: string[] }
+              | undefined;
+            const contact = o.contact as { email?: string; phone?: string } | undefined;
+            firestorePartial = {
+              type: committedType ?? seed.type,
+              legalName: o.name as string | undefined,
+              email: contact?.email,
+              phone: contact?.phone,
+              geo: {
+                lat: geo?.lat,
+                lng: geo?.lng,
+                adminRegion: geo?.adminRegion,
+                operatingAreas: geo?.operatingAreas ?? [],
+              },
+            };
+            const govtDocs = (o.govtDocs as Array<{ docType: string; fileUrl: string }> | undefined) ?? [];
+            for (const d of govtDocs) {
+              firestoreDocs[d.docType as DocType] = {
+                docType: d.docType as DocType,
+                fileUrl: d.fileUrl,
+                storagePath: "",
+                uploadedAt: 0,
+              };
+            }
+          }
+        } catch (err) {
+          console.warn("[onboarding] could not load existing org", err);
+        }
+      }
+      if (cancelled) return;
+
+      // Layer: session storage -> firestore (firestore wins for fields it has).
+      const loaded = loadSession({ ...seed, ...firestorePartial });
+      const merged: Partial<OnboardingData> = { ...loaded.partialData, ...firestorePartial };
+      const mergedDocs: DocsByType = { ...loaded.docs, ...firestoreDocs };
+
+      setSessionId(loaded.sessionId);
+      setPartialData(merged);
+      setDocs(mergedDocs);
+      form.reset({
+        legalName: merged.legalName ?? "",
+        email: merged.email ?? "",
+        phone: merged.phone ?? "",
+        adminRegion: merged.geo?.adminRegion ?? "",
+        lat: typeof merged.geo?.lat === "number" ? merged.geo.lat : 0,
+        lng: typeof merged.geo?.lng === "number" ? merged.geo.lng : 0,
+      });
+      setBooted(true);
+    }
+    void init();
+    return () => {
+      cancelled = true;
+    };
+  }, [type, form, user]);
+
+  // Firestore-committed type wins over the URL prop and any session value.
+  // Closes the URL-tampering loophole where a user with an ORG could visit
+  // /onboard/form?type=NGO and start uploading NGO docs into their ORG.
+  const effectiveType = existingOrgType ?? type ?? partialData.type;
   const neededDocs = requiredDocs(effectiveType);
 
   async function onSubmit(values: FormValues) {

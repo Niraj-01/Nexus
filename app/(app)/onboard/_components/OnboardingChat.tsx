@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { OnboardingTurnOutputSchema } from "@/lib/schemas";
 import type { OnboardingData, OrgType } from "@/lib/schemas";
@@ -80,45 +82,77 @@ export function OnboardingChat({ type }: { type: OrgType | undefined }) {
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [partialData, setPartialData] = useState<OnboardingData>({});
   const [docs, setDocs] = useState<DocsByType>({});
+  // Firestore-committed type (immutable). Wins over the URL ?type= prop
+  // so a hand-crafted URL can't switch an existing org's type.
+  const [existingOrgType, setExistingOrgType] = useState<OrgType | null>(null);
   const [busy, setBusy] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<UploadedDoc[]>([]);
   const listRef = useRef<HTMLOListElement>(null);
 
-  useEffect(() => {
-    const seed: Partial<OnboardingData> = type ? { type } : {};
-    const loaded = loadSession(seed);
-    setSessionId(loaded.sessionId);
-    setHistory(loaded.history);
-    setPartialData(loaded.partialData);
-    setDocs(loaded.docs);
+  // The type the chat actually uses for greetings, fallback links, and
+  // finalize payload. Firestore wins; URL/session are fallbacks.
+  const effectiveType = existingOrgType ?? type;
 
-    if (loaded.history.length === 0) {
-      const ngoVariants = [
-        "Hey 👋 I'm Nexus. Let's get your NGO on board — takes about two minutes, chat style.\n\nWhat's the legal name on your registration?",
-        "Hi there! Quick onboarding for your NGO — I'll ask a few things, you reply however you like.\n\nWhat name is it registered under?",
-        "Welcome! Happy to help you register your NGO.\n\nTo start — what's the legal name of the organization?",
-      ];
-      const orgVariants = [
-        "Hey 👋 I'm Nexus. Let's get your organization set up — chat style, should be quick.\n\nWhat's the registered legal name?",
-        "Hi! I'll help you onboard your organization in a few short questions.\n\nFirst up: the full legal name?",
-        "Welcome aboard. Quick chat-based onboarding for your company/hospital/etc.\n\nWhat's the name on your registration papers?",
-      ];
-      const neutral = "Hey 👋 Before we start — are you registering as an NGO or as an Organization?";
-      const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
-      const greeting =
-        type === "NGO" ? pick(ngoVariants) : type === "ORG" ? pick(orgVariants) : neutral;
-      const first: ChatMessage = { role: "assistant", content: greeting, at: Date.now() };
-      setHistory([first]);
-      saveSession({
-        history: [first],
-        partialData: loaded.partialData,
-        sessionId: loaded.sessionId,
-        docs: loaded.docs,
-      });
+  useEffect(() => {
+    let cancelled = false;
+    async function init() {
+      // Look up the user's existing org first — if it has a type, that's
+      // the immutable one we'll use throughout this chat session.
+      let committedType: OrgType | null = null;
+      if (user) {
+        try {
+          const orgSnap = await getDoc(doc(db, "organizations", user.uid));
+          if (orgSnap.exists()) {
+            const t = orgSnap.data()?.type;
+            if (t === "NGO" || t === "ORG") committedType = t;
+          }
+        } catch (err) {
+          console.warn("[onboarding-chat] could not load existing org", err);
+        }
+      }
+      if (cancelled) return;
+      if (committedType) setExistingOrgType(committedType);
+
+      const initialType = committedType ?? type;
+      const seed: Partial<OnboardingData> = initialType ? { type: initialType } : {};
+      const loaded = loadSession(seed);
+      setSessionId(loaded.sessionId);
+      setHistory(loaded.history);
+      setPartialData(loaded.partialData);
+      setDocs(loaded.docs);
+
+      if (loaded.history.length === 0) {
+        const ngoVariants = [
+          "Hey 👋 I'm Nexus. Let's get your NGO on board — takes about two minutes, chat style.\n\nWhat's the legal name on your registration?",
+          "Hi there! Quick onboarding for your NGO — I'll ask a few things, you reply however you like.\n\nWhat name is it registered under?",
+          "Welcome! Happy to help you register your NGO.\n\nTo start — what's the legal name of the organization?",
+        ];
+        const orgVariants = [
+          "Hey 👋 I'm Nexus. Let's get your organization set up — chat style, should be quick.\n\nWhat's the registered legal name?",
+          "Hi! I'll help you onboard your organization in a few short questions.\n\nFirst up: the full legal name?",
+          "Welcome aboard. Quick chat-based onboarding for your company/hospital/etc.\n\nWhat's the name on your registration papers?",
+        ];
+        const neutral = "Hey 👋 Before we start — are you registering as an NGO or as an Organization?";
+        const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
+        const greeting =
+          initialType === "NGO" ? pick(ngoVariants) : initialType === "ORG" ? pick(orgVariants) : neutral;
+        const first: ChatMessage = { role: "assistant", content: greeting, at: Date.now() };
+        setHistory([first]);
+        saveSession({
+          history: [first],
+          partialData: loaded.partialData,
+          sessionId: loaded.sessionId,
+          docs: loaded.docs,
+        });
+      }
+      setBooted(true);
     }
-    setBooted(true);
-  }, [type]);
+    void init();
+    return () => {
+      cancelled = true;
+    };
+  }, [type, user]);
 
   useEffect(() => {
     // auto-scroll to latest message when history or busy changes
@@ -170,14 +204,14 @@ export function OnboardingChat({ type }: { type: OrgType | undefined }) {
         setHistory(afterFallback);
         saveSession({ history: afterFallback, partialData, sessionId, docs });
         toast.info("Switching to the form view.");
-        router.push(formHref(type, partialData.type));
+        router.push(formHref(effectiveType, partialData.type));
         return;
       }
 
       const parsed = OnboardingTurnOutputSchema.safeParse(json.output);
       if (!parsed.success) {
         toast.error("Unexpected response — opening the form.");
-        router.push(formHref(type, partialData.type));
+        router.push(formHref(effectiveType, partialData.type));
         return;
       }
 
@@ -206,8 +240,11 @@ export function OnboardingChat({ type }: { type: OrgType | undefined }) {
       toast.error("You need to be signed in to save your organization.");
       return;
     }
+    // Defense in depth: never let a chat-driven `data.type` overwrite the
+    // committed Firestore type. finalize.ts also enforces this.
+    const safeData = existingOrgType ? { ...data, type: existingOrgType } : data;
     try {
-      await finalizeOrg(user.uid, data, docsToSave);
+      await finalizeOrg(user.uid, safeData, docsToSave);
       clearSession();
       toast.success("Organization saved. We'll review your docs shortly.");
       router.replace("/dashboard");
@@ -269,7 +306,7 @@ export function OnboardingChat({ type }: { type: OrgType | undefined }) {
           </span>
         </div>
         <div className="chat-topbar-actions">
-          <Link href={formHref(type, partialData.type)} className="chat-switch-link">Form</Link>
+          <Link href={formHref(effectiveType, partialData.type)} className="chat-switch-link">Form</Link>
         </div>
       </header>
 

@@ -16,7 +16,9 @@
     "seed": "tsx --env-file-if-exists=.env.local scripts/seed.ts",
     "seed:emu": "tsx scripts/seed.ts",
     "approve": "tsx --env-file-if-exists=.env.local scripts/approveAll.ts",
-    "approve:emu": "tsx scripts/approveAll.ts"
+    "approve:emu": "tsx scripts/approveAll.ts",
+    "deploy": "git push && firebase apphosting:rollouts:create nexus --git-branch main --project buffet-493105",
+    "deploy:functions": "npm --prefix functions run deploy"
   },
   "dependencies": {
     "@google/genai": "^1.50.1",
