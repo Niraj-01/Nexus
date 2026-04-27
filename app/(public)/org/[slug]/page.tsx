@@ -2,6 +2,7 @@ import Link from "next/link";
 import { cache } from "react";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { ArrowLeft, MapPin, ShieldCheck } from "lucide-react";
 import { adminDb } from "@/lib/firebase/admin";
 import { HomeTopbar } from "../../_components/HomeTopbar";
 
@@ -183,189 +184,141 @@ export default async function PublicOrgPage({
   const hostedCount = badges.filter((b) => b.role === "HOST").length;
   const contributedCount = badges.filter((b) => b.role === "CONTRIBUTOR").length;
 
-  return (
-    <div className="landing-shell">
-      <HomeTopbar />
-      <main
-        className="container"
-        style={{ padding: "32px 24px 64px", maxWidth: 1080 }}
-      >
-        <article className="stack">
-          <header className="stack-sm">
-            <div
-              className="row"
-              style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}
-            >
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
-                  padding: "2px 8px",
-                  borderRadius: 4,
-                  background: "var(--color-primary)",
-                  color: "white",
-                }}
-              >
-                {org.type}
-              </span>
-              <span
-                style={{
-                  fontSize: 12,
-                  color: "var(--color-success)",
-                  fontWeight: 600,
-                }}
-              >
-                Verified · {verified}
-              </span>
-              <span className="muted-text" style={{ fontSize: 12 }}>·</span>
-              <span className="muted-text" style={{ fontSize: 12 }}>
-                {org.geo.adminRegion}
-              </span>
-            </div>
-            <h1
-              style={{
-                fontFamily: "var(--font-display)",
-                fontSize: 36,
-                fontWeight: 700,
-                letterSpacing: "-0.02em",
-                margin: 0,
-              }}
-            >
-              {org.name}
-            </h1>
-            <p className="muted-text" style={{ fontSize: 14 }}>
-              {hostedCount} hosted · {contributedCount} contributions ·{" "}
-              <span className="num">
-                ₹
-                {new Intl.NumberFormat("en-IN").format(
-                  Math.round(totalDelivered),
-                )}
-              </span>{" "}
-              delivered
-            </p>
-          </header>
+  const fmt = (v: number) =>
+    new Intl.NumberFormat("en-IN").format(Math.round(v));
 
-          <section className="stack-sm">
-            <h2 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>
-              Reliability
-            </h2>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: 12,
-              }}
-            >
-              <ReliabilityBar label="Agreement" score={reliability.agreement} />
-              <ReliabilityBar label="Execution" score={reliability.execution} />
-              <ReliabilityBar label="Closure" score={reliability.closure} />
+  return (
+    <div className="pd-shell">
+      <HomeTopbar />
+      <main className="pd-main">
+        <Link href="/" className="pd-back">
+          <ArrowLeft size={14} /> Back to home
+        </Link>
+
+        {/* ── Hero ── */}
+        <header className="pd-hero">
+          <div className="pd-hero-meta">
+            <span className="pd-chip pd-chip--type">{org.type}</span>
+            <span className="pd-chip pd-chip--closed">
+              <ShieldCheck size={12} /> Verified · {verified}
+            </span>
+            <span className="pd-chip">
+              <MapPin size={12} /> {org.geo.adminRegion}
+            </span>
+          </div>
+          <h1 className="pd-title">{org.name}</h1>
+          <p className="pd-desc">
+            Verified {org.type === "NGO" ? "non-profit" : "organization"} on the
+            Nexus network. All activity below is attributed via on-chain badges
+            issued at ticket closure.
+          </p>
+        </header>
+
+        {/* ── Stat trio ── */}
+        <div className="po-stat-grid">
+          <div className="po-stat-card">
+            <span className="po-stat-key">Hosted</span>
+            <span className="po-stat-val">{hostedCount}</span>
+          </div>
+          <div className="po-stat-card">
+            <span className="po-stat-key">Contributions</span>
+            <span className="po-stat-val">{contributedCount}</span>
+          </div>
+          <div className="po-stat-card">
+            <span className="po-stat-key">Total delivered</span>
+            <span className="po-stat-val po-stat-val--money">
+              ₹{fmt(totalDelivered)}
+            </span>
+          </div>
+        </div>
+
+        {/* ── Reliability ── */}
+        <section className="pd-section">
+          <div className="pd-section-head">
+            <h2 className="pd-section-title">Reliability</h2>
+            <p className="pd-section-sub">
+              Performance across the three lifecycle phases. Decays slowly with
+              inactivity.
+            </p>
+          </div>
+          <div className="po-rel-grid">
+            <ReliabilityBar label="Agreement" score={reliability.agreement} />
+            <ReliabilityBar label="Execution" score={reliability.execution} />
+            <ReliabilityBar label="Closure" score={reliability.closure} />
+          </div>
+        </section>
+
+        {/* ── Typical resources ── */}
+        {resources.length > 0 && (
+          <section className="pd-section">
+            <div className="pd-section-head">
+              <h2 className="pd-section-title">Typical resources</h2>
+              <p className="pd-section-sub">
+                Categories this organization commonly lists, ranked by total
+                valuation.
+              </p>
+            </div>
+            <div className="po-resource-grid">
+              {resources.map((r) => (
+                <div key={r.category} className="po-resource-chip">
+                  <span className="po-resource-cat">{r.category}</span>
+                  <span className="po-resource-meta">
+                    {r.count} listing{r.count === 1 ? "" : "s"} · ₹
+                    <span className="num">{fmt(r.totalValuationINR)}</span>
+                  </span>
+                </div>
+              ))}
             </div>
           </section>
+        )}
 
-          {resources.length > 0 && (
-            <section className="stack-sm">
-              <h2 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>
-                Typical resources
-              </h2>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-                  gap: 12,
-                }}
-              >
-                {resources.map((r) => (
-                  <div key={r.category} className="card stack-sm">
-                    <strong style={{ fontSize: 13 }}>{r.category}</strong>
-                    <span className="muted-text" style={{ fontSize: 12 }}>
-                      {r.count} listing{r.count === 1 ? "" : "s"} · ₹
-                      <span className="num">
-                        {new Intl.NumberFormat("en-IN").format(
-                          Math.round(r.totalValuationINR),
-                        )}
-                      </span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {badges.length > 0 && (
-            <section className="stack-sm">
-              <h2 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>
-                Badge grid
-              </h2>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
-                  gap: 12,
-                }}
-              >
-                {badges.map((b) => (
+        {/* ── Badge history ── */}
+        {badges.length > 0 && (
+          <section className="pd-section">
+            <div className="pd-section-head">
+              <h2 className="pd-section-title">Badge history</h2>
+              <p className="pd-section-sub">
+                Every closed ticket where this org participated. Click for the
+                public dossier.
+              </p>
+            </div>
+            <div className="po-badge-grid">
+              {badges.map((b) => {
+                const isHost = b.role === "HOST";
+                return (
                   <Link
                     key={`${b.ticketId}__${b.orgId}`}
                     href={`/ticket/${b.ticketId}`}
-                    className="card stack-sm"
-                    style={{
-                      textDecoration: "none",
-                      color: "inherit",
-                      display: "block",
-                    }}
+                    className="po-badge-card"
                   >
-                    <div
-                      className="row"
-                      style={{
-                        justifyContent: "space-between",
-                        alignItems: "baseline",
-                        gap: 8,
-                      }}
-                    >
-                      <strong style={{ fontSize: 14 }}>{b.ticketTitle}</strong>
+                    <div className="po-badge-head">
+                      <span className="po-badge-title">{b.ticketTitle}</span>
                       <span
-                        style={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          textTransform: "uppercase",
-                          letterSpacing: "0.04em",
-                          padding: "2px 6px",
-                          borderRadius: 4,
-                          background:
-                            b.role === "HOST"
-                              ? "var(--color-primary)"
-                              : "var(--color-surface-3)",
-                          color:
-                            b.role === "HOST"
-                              ? "white"
-                              : "var(--color-text-2)",
-                        }}
+                        className={`pd-contrib-role${isHost ? " pd-contrib-role--host" : ""}`}
                       >
                         {b.role}
                       </span>
                     </div>
-                    <span className="muted-text" style={{ fontSize: 12 }}>
-                      {b.ticketCategory} ·{" "}
-                      <span className="num">
-                        ₹
-                        {new Intl.NumberFormat("en-IN").format(
-                          Math.round(b.contributedValuationINR),
-                        )}
-                      </span>{" "}
-                      · score{" "}
-                      <span className="num">{Math.round(b.scorePct)}</span>
-                    </span>
-                    <span className="muted-text" style={{ fontSize: 11 }}>
+                    <div className="po-badge-meta">
+                      <span>{b.ticketCategory}</span>
+                      <span className="po-badge-meta-dot" />
+                      <span>
+                        ₹<span className="num">{fmt(b.contributedValuationINR)}</span>
+                      </span>
+                      <span className="po-badge-meta-dot" />
+                      <span>
+                        score <span className="num">{Math.round(b.scorePct)}</span>
+                      </span>
+                    </div>
+                    <div className="po-badge-foot">
                       Closed {new Date(b.closedAt).toLocaleDateString()}
-                    </span>
+                    </div>
                   </Link>
-                ))}
-              </div>
-            </section>
-          )}
-        </article>
+                );
+              })}
+            </div>
+          </section>
+        )}
       </main>
     </div>
   );
@@ -373,37 +326,17 @@ export default async function PublicOrgPage({
 
 function ReliabilityBar({ label, score }: { label: string; score: number }) {
   const clamped = Math.max(0, Math.min(100, score));
-  const tone =
-    clamped >= 75
-      ? "var(--color-success)"
-      : clamped >= 40
-        ? "var(--color-primary)"
-        : "var(--color-danger)";
+  const tone = clamped >= 75 ? "high" : clamped >= 40 ? "mid" : "low";
   return (
-    <div className="card stack-sm">
-      <div
-        className="row"
-        style={{ justifyContent: "space-between", alignItems: "baseline" }}
-      >
-        <strong style={{ fontSize: 13 }}>{label}</strong>
-        <span className="num" style={{ fontWeight: 700, fontSize: 16 }}>
-          {Math.round(clamped)}
-        </span>
+    <div className="po-rel-card">
+      <div className="po-rel-head">
+        <span className="po-rel-label">{label}</span>
+        <span className={`po-rel-score po-rel--${tone}`}>{Math.round(clamped)}</span>
       </div>
-      <div
-        style={{
-          height: 6,
-          background: "var(--color-surface-2)",
-          borderRadius: 999,
-          overflow: "hidden",
-        }}
-      >
+      <div className="po-rel-bar">
         <div
-          style={{
-            width: `${clamped}%`,
-            height: "100%",
-            background: tone,
-          }}
+          className={`po-rel-bar-fill po-rel-bar-fill--${tone}`}
+          style={{ width: `${clamped}%` }}
         />
       </div>
     </div>

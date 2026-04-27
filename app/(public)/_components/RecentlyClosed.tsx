@@ -86,33 +86,15 @@ export async function RecentlyClosed() {
   if (cards.length === 0) return null;
 
   return (
-    <section
-      className="container"
-      style={{ padding: "48px 24px", maxWidth: 1080 }}
-    >
-      <header className="stack-sm" style={{ marginBottom: 24 }}>
-        <h2
-          style={{
-            fontFamily: "var(--font-display)",
-            fontSize: 28,
-            fontWeight: 700,
-            letterSpacing: "-0.02em",
-            margin: 0,
-          }}
-        >
-          Recently delivered
-        </h2>
-        <p className="muted-text" style={{ fontSize: 14 }}>
-          Closed tickets across the network, with full attribution.
+    <section className="rc-section">
+      <header className="rc-head">
+        <h2 className="rc-title">Recently delivered</h2>
+        <p className="rc-sub">
+          Closed tickets across the network, with full attribution. Click any
+          card for the public dossier.
         </p>
       </header>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-          gap: 16,
-        }}
-      >
+      <div className="rc-grid">
         {cards.map((c) => (
           <ClosedCard key={c.id} card={c} />
         ))}
@@ -125,97 +107,30 @@ function ClosedCard({ card }: { card: ClosedTicketCard }) {
   const closed = card.closedAt
     ? new Date(card.closedAt).toLocaleDateString()
     : "—";
+  const fmt = (v: number) =>
+    new Intl.NumberFormat("en-IN").format(Math.round(v));
   return (
-    <Link
-      href={`/ticket/${card.id}`}
-      className="card stack-sm"
-      style={{
-        textDecoration: "none",
-        color: "inherit",
-        display: "block",
-        padding: 0,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          aspectRatio: "16 / 9",
-          background: "var(--color-surface-2)",
-          position: "relative",
-        }}
-      >
+    <Link href={`/ticket/${card.id}`} className="rc-card">
+      <div className="rc-thumb">
         {card.thumbUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={card.thumbUrl}
-            alt={card.title}
-            loading="lazy"
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              display: "block",
-            }}
-          />
+          <img src={card.thumbUrl} alt={card.title} loading="lazy" />
         ) : (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              height: "100%",
-              color: "var(--color-muted)",
-              fontSize: 12,
-            }}
-          >
-            No photo
-          </div>
+          <div className="rc-thumb-empty">No photo</div>
         )}
-        <span
-          style={{
-            position: "absolute",
-            top: 8,
-            left: 8,
-            fontSize: 10,
-            fontWeight: 700,
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
-            padding: "2px 6px",
-            borderRadius: 4,
-            background: "var(--color-success)",
-            color: "white",
-          }}
-        >
-          Closed
-        </span>
+        <span className="rc-thumb-stamp">Closed</span>
       </div>
-      <div className="stack-sm" style={{ padding: 14 }}>
-        <h3 style={{ fontWeight: 600, fontSize: 16, margin: 0, lineHeight: 1.3 }}>
-          {card.title}
-        </h3>
-        <span className="muted-text" style={{ fontSize: 12 }}>
+      <div className="rc-body">
+        <h3 className="rc-card-title">{card.title}</h3>
+        <span className="rc-card-meta">
           {card.hostName} · {card.hostType}
           {card.region ? ` · ${card.region}` : ""}
         </span>
-        <div
-          className="row"
-          style={{
-            justifyContent: "space-between",
-            alignItems: "baseline",
-            paddingTop: 6,
-            borderTop: "1px solid var(--color-border)",
-          }}
-        >
-          <span className="num" style={{ fontWeight: 700, fontSize: 16 }}>
-            ₹
-            {new Intl.NumberFormat("en-IN").format(
-              Math.round(card.totalDelivered),
-            )}
-          </span>
-          <span className="muted-text" style={{ fontSize: 12 }}>
+        <div className="rc-card-foot">
+          <span className="rc-card-amount">₹{fmt(card.totalDelivered)}</span>
+          <span className="rc-card-contrib">
             {card.contributorCount}{" "}
-            {card.contributorCount === 1 ? "contributor" : "contributors"} ·{" "}
-            {closed}
+            {card.contributorCount === 1 ? "contributor" : "contributors"} · {closed}
           </span>
         </div>
       </div>

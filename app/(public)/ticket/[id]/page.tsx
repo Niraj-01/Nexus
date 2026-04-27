@@ -1,7 +1,10 @@
+import Link from "next/link";
 import { cache } from "react";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { ArrowLeft, MapPin } from "lucide-react";
 import { adminDb, adminStorage } from "@/lib/firebase/admin";
+import { HomeTopbar } from "../../_components/HomeTopbar";
 
 export const revalidate = 60;
 
@@ -202,217 +205,178 @@ export default async function PublicTicketPage({
     return (b.proportionalSharePct ?? 0) - (a.proportionalSharePct ?? 0);
   });
 
+  const fmt = (v: number) => new Intl.NumberFormat("en-IN").format(Math.round(v));
+
   return (
-    <main className="container" style={{ padding: "32px 24px 64px", maxWidth: 960 }}>
-      <article className="stack">
-        <header className="stack-sm">
-          <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+    <div className="pd-shell">
+      <HomeTopbar />
+      <main className="pd-main">
+        <Link href="/" className="pd-back">
+          <ArrowLeft size={14} /> Back to home
+        </Link>
+
+        {/* ── Hero ── */}
+        <header className="pd-hero">
+          <div className="pd-hero-meta">
             {ticket.rapid && (
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
-                  padding: "2px 8px",
-                  borderRadius: 4,
-                  background: "var(--color-danger)",
-                  color: "white",
-                }}
-              >
-                Emergency
-              </span>
+              <span className="pd-chip pd-chip--rapid">Emergency</span>
             )}
-            <span style={{ fontSize: 12, color: "var(--color-success)", fontWeight: 600 }}>
-              Closed · {closedDate}
+            <span className="pd-chip pd-chip--closed">
+              <span className="pd-chip-dot" /> Closed · {closedDate}
             </span>
-            <span className="muted-text" style={{ fontSize: 12 }}>·</span>
-            <span style={{ fontSize: 12, color: "var(--color-muted)" }}>
+            <span className="pd-chip">
               Hosted by {ticket.host.name} · {ticket.host.type}
             </span>
-            <span className="muted-text" style={{ fontSize: 12 }}>·</span>
-            <span className="muted-text" style={{ fontSize: 12 }}>
-              {ticket.geo.adminRegion}
+            <span className="pd-chip">
+              <MapPin size={12} /> {ticket.geo.adminRegion}
             </span>
           </div>
-          <h1
-            style={{
-              fontFamily: "var(--font-display)",
-              fontSize: 36,
-              fontWeight: 700,
-              letterSpacing: "-0.02em",
-              margin: 0,
-            }}
-          >
-            {ticket.title}
-          </h1>
-          <p className="muted-text" style={{ whiteSpace: "pre-wrap" }}>
-            {ticket.description}
-          </p>
+          <h1 className="pd-title">{ticket.title}</h1>
+          {ticket.description && (
+            <p className="pd-desc">{ticket.description}</p>
+          )}
         </header>
 
-        <div className="card stack-sm">
-          <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-            <strong>Impact delivered</strong>
-            <span className="num" style={{ fontSize: 28, fontWeight: 700 }}>
-              ₹{new Intl.NumberFormat("en-IN").format(Math.round(totalDelivered))}
-            </span>
+        {/* ── Impact card ── */}
+        <div className="pd-impact">
+          <div className="pd-impact-l">
+            <span className="pd-impact-label">Total impact delivered</span>
+            <span className="pd-impact-value">₹{fmt(totalDelivered)}</span>
           </div>
-          <span className="muted-text" style={{ fontSize: 13 }}>
-            {badges.length} {badges.length === 1 ? "participant" : "participants"} ·{" "}
-            {ticket.needs.length}{" "}
-            {ticket.needs.length === 1 ? "need" : "needs"} fulfilled
-          </span>
+          <div className="pd-impact-meta">
+            <div>
+              {badges.length} {badges.length === 1 ? "participant" : "participants"}
+            </div>
+            <div>
+              {ticket.needs.length}{" "}
+              {ticket.needs.length === 1 ? "need" : "needs"} fulfilled
+            </div>
+          </div>
         </div>
 
+        {/* ── Needs ── */}
         {ticket.needs.length > 0 && (
-          <section className="stack-sm">
-            <h2 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>What was delivered</h2>
-            {ticket.needs.map((n, i) => (
-              <div key={i} className="card stack-sm">
-                <div
-                  className="row"
-                  style={{ justifyContent: "space-between", alignItems: "baseline" }}
-                >
-                  <strong>
-                    {n.resourceCategory}
-                    {n.subtype ? ` · ${n.subtype}` : ""}
-                  </strong>
-                  <span className="num" style={{ fontSize: 13, fontWeight: 600 }}>
-                    {Math.round(n.progressPct)}%
-                  </span>
-                </div>
-                <span className="muted-text" style={{ fontSize: 13 }}>
-                  <span className="num">{n.quantity}</span> {n.unit}
-                </span>
-                <div
-                  style={{
-                    height: 4,
-                    background: "var(--color-surface-2)",
-                    borderRadius: 999,
-                    overflow: "hidden",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${Math.min(100, Math.max(0, n.progressPct))}%`,
-                      height: "100%",
-                      background: "var(--color-primary)",
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </section>
-        )}
-
-        {sortedBadges.length > 0 && (
-          <section className="stack-sm">
-            <h2 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>Contributors</h2>
-            <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
-              {sortedBadges.map((b) => (
-                <div
-                  key={b.orgId}
-                  className="card stack-sm"
-                  style={{ minWidth: 220, flex: "1 1 220px" }}
-                >
-                  <div
-                    className="row"
-                    style={{ justifyContent: "space-between", alignItems: "baseline", gap: 8 }}
-                  >
-                    <strong style={{ fontSize: 14 }}>
-                      {orgNames[b.orgId] ?? b.orgId.slice(0, 6)}
-                    </strong>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        textTransform: "uppercase",
-                        letterSpacing: "0.04em",
-                        padding: "2px 6px",
-                        borderRadius: 4,
-                        background:
-                          b.role === "HOST"
-                            ? "var(--color-primary)"
-                            : "var(--color-surface-3)",
-                        color: b.role === "HOST" ? "white" : "var(--color-text-2)",
-                      }}
-                    >
-                      {b.role}
+          <section className="pd-section">
+            <div className="pd-section-head">
+              <h2 className="pd-section-title">What was delivered</h2>
+              <p className="pd-section-sub">
+                Each line is a discrete need. Progress reflects committed and
+                signed-off contributions.
+              </p>
+            </div>
+            <div className="pd-needs-grid">
+              {ticket.needs.map((n, i) => {
+                const pct = Math.min(100, Math.max(0, n.progressPct));
+                return (
+                  <div key={i} className="pd-need-card">
+                    <div className="pd-need-head">
+                      <span className="pd-need-name">
+                        {n.resourceCategory}
+                        {n.subtype ? ` · ${n.subtype}` : ""}
+                      </span>
+                      <span className="pd-need-pct">{Math.round(pct)}%</span>
+                    </div>
+                    <span className="pd-need-qty">
+                      <span className="num">{n.quantity}</span> {n.unit}
+                      {n.valuationINR > 0 && (
+                        <> · ≈ ₹<span className="num">{fmt(n.valuationINR)}</span></>
+                      )}
                     </span>
+                    <div className="pd-need-bar">
+                      <div className="pd-need-bar-fill" style={{ width: `${pct}%` }} />
+                    </div>
                   </div>
-                  <span className="muted-text" style={{ fontSize: 12 }}>
-                    <span className="num">
-                      {Number(b.proportionalSharePct ?? 0).toFixed(1)}%
-                    </span>{" "}
-                    share · score{" "}
-                    <span className="num">{Math.round(Number(b.scorePct ?? 0))}</span>
-                  </span>
-                  <div
-                    style={{
-                      height: 3,
-                      background: "var(--color-surface-2)",
-                      borderRadius: 999,
-                      overflow: "hidden",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${Math.min(100, Math.max(0, Number(b.scorePct ?? 0)))}%`,
-                        height: "100%",
-                        background: "var(--color-primary)",
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         )}
 
+        {/* ── Contributors ── */}
+        {sortedBadges.length > 0 && (
+          <section className="pd-section">
+            <div className="pd-section-head">
+              <h2 className="pd-section-title">Contributors</h2>
+              <p className="pd-section-sub">
+                Verified orgs that hosted or contributed. Click to view their profile.
+              </p>
+            </div>
+            <div className="pd-contrib-grid">
+              {sortedBadges.map((b) => {
+                const score = Math.min(100, Math.max(0, Number(b.scorePct ?? 0)));
+                const isHost = b.role === "HOST";
+                return (
+                  <Link
+                    key={`${b.orgId}-${b.role}`}
+                    href={`/org/${b.orgId}`}
+                    className={`pd-contrib-card${isHost ? " pd-contrib-card--host" : ""}`}
+                  >
+                    <div className="pd-contrib-head">
+                      <span className="pd-contrib-name">
+                        {orgNames[b.orgId] ?? b.orgId.slice(0, 8)}
+                      </span>
+                      <span className={`pd-contrib-role${isHost ? " pd-contrib-role--host" : ""}`}>
+                        {b.role}
+                      </span>
+                    </div>
+                    <div className="pd-contrib-stats">
+                      <div>
+                        <span className="pd-contrib-stat-key">Share</span>
+                        <span className="pd-contrib-stat-val">
+                          {Number(b.proportionalSharePct ?? 0).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div>
+                        <span className="pd-contrib-stat-key">Score</span>
+                        <span className="pd-contrib-stat-val">{Math.round(score)}</span>
+                      </div>
+                      <div>
+                        <span className="pd-contrib-stat-key">Value</span>
+                        <span className="pd-contrib-stat-val">
+                          ₹{fmt(b.contributedValuationINR)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="pd-contrib-bar">
+                      <div className="pd-contrib-bar-fill" style={{ width: `${score}%` }} />
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* ── Proofs ── */}
         {proofs.length > 0 && (
-          <section className="stack-sm">
-            <h2 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>Proof of delivery</h2>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-                gap: 12,
-              }}
-            >
+          <section className="pd-section">
+            <div className="pd-section-head">
+              <h2 className="pd-section-title">Proof of delivery</h2>
+              <p className="pd-section-sub">
+                Photographs uploaded by the host as evidence of execution.
+              </p>
+            </div>
+            <div className="pd-proof-grid">
               {proofs.map((p, i) => (
                 <a
                   key={i}
                   href={p.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{
-                    display: "block",
-                    borderRadius: 8,
-                    overflow: "hidden",
-                    border: "1px solid var(--color-border)",
-                    aspectRatio: "4 / 3",
-                    background: "var(--color-surface-2)",
-                  }}
+                  className="pd-proof-tile"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={p.url}
                     alt={p.caption || "Proof of delivery"}
                     loading="lazy"
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "cover",
-                      display: "block",
-                    }}
                   />
                 </a>
               ))}
             </div>
           </section>
         )}
-      </article>
-    </main>
+      </main>
+    </div>
   );
 }
