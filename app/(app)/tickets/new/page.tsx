@@ -79,6 +79,10 @@ export default function NewTicketPage() {
     }
   }
 
+  function onInvalid() {
+    toast.error("Please fix the highlighted fields before submitting.");
+  }
+
   const urgency = form.watch("urgency");
 
   return (
@@ -92,7 +96,7 @@ export default function NewTicketPage() {
         </p>
       </header>
 
-      <form onSubmit={form.handleSubmit(onSubmit)} className="stack">
+      <form onSubmit={form.handleSubmit(onSubmit, onInvalid)} className="stack">
         <div className="card stack">
           <div className="form-row">
             <label htmlFor="title" className="label">Title</label>
@@ -217,16 +221,31 @@ export default function NewTicketPage() {
               <label className="label">Admin region (city/state)</label>
               <input className="input" placeholder="e.g. Dharwad, KA"
                      {...form.register("geo.adminRegion")} />
+              {form.formState.errors.geo?.adminRegion && (
+                <span className="error-text">{form.formState.errors.geo.adminRegion.message}</span>
+              )}
             </div>
             <div className="form-row" style={{ flex: 1, minWidth: 120 }}>
               <label className="label">Latitude</label>
-              <input type="number" className="input" step="any"
+              <input type="number" className="input" step="any" min={-90} max={90}
+                     placeholder="-90 to 90"
                      {...form.register("geo.lat", { valueAsNumber: true })} />
+              {form.formState.errors.geo?.lat && (
+                <span className="error-text">
+                  {form.formState.errors.geo.lat.message ?? "Latitude must be between -90 and 90."}
+                </span>
+              )}
             </div>
             <div className="form-row" style={{ flex: 1, minWidth: 120 }}>
               <label className="label">Longitude</label>
-              <input type="number" className="input" step="any"
+              <input type="number" className="input" step="any" min={-180} max={180}
+                     placeholder="-180 to 180"
                      {...form.register("geo.lng", { valueAsNumber: true })} />
+              {form.formState.errors.geo?.lng && (
+                <span className="error-text">
+                  {form.formState.errors.geo.lng.message ?? "Longitude must be between -180 and 180."}
+                </span>
+              )}
             </div>
           </div>
 
@@ -244,6 +263,9 @@ export default function NewTicketPage() {
                 />
               )}
             />
+            {form.formState.errors.deadline && (
+              <span className="error-text">{form.formState.errors.deadline.message}</span>
+            )}
           </div>
         </div>
 

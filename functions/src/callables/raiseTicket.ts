@@ -14,7 +14,7 @@ import { withIdempotency } from "../lib/idempotency";
  * Embedding is NOT written here — onTicketCreated trigger (future) calls
  * Vertex text-embedding-004.
  */
-export const raiseTicket = onCall({ cors: true }, async (request) => {
+export const raiseTicket = onCall({ cors: true, invoker: "public" }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Sign in required.");
   }

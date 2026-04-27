@@ -123,10 +123,9 @@ service cloud.firestore {
 
     // ─── tickets ─────────────────────────────────────────────────────────────
     match /tickets/{ticketId} {
-      // Public: closed tickets are fully readable.
-      allow read: if resource.data.phase == 'CLOSED';
-      // Authenticated: any signed-in user can read tickets (dashboard/matching).
-      allow read: if isSignedIn();
+      // Public: any visitor can read tickets (active + closed) so the
+      // landing page and public ticket detail can render without auth.
+      allow read: if true;
 
       // Create: signed in, no server-only fields, must NOT set progressPct/phase.
       // urgency + rapid ARE set on create (they're how Flow A/B is chosen) — allowed.
@@ -173,7 +172,9 @@ service cloud.firestore {
 
       // ── contributions subcollection ──────────────────────────────────────
       match /contributions/{contributionId} {
-        allow read: if isSignedIn();
+        // Public: contribution rows are readable so visitors can see who
+        // pledged what on the public ticket detail page.
+        allow read: if true;
 
         // Create: PROPOSED only; status + commitPath server-owned.
         allow create: if isSignedIn()

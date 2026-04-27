@@ -12,6 +12,14 @@
       "collectionGroup": "tickets",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "phase", "order": "ASCENDING" },
+        { "fieldPath": "lastUpdatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tickets",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "rapid", "order": "ASCENDING" },
         { "fieldPath": "phase", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
@@ -100,6 +108,14 @@
       "fields": [
         { "fieldPath": "orgId", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "resources",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "orgId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },
     {

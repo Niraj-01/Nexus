@@ -1,28 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useAuth } from "@/lib/auth/AuthProvider";
-import { NexusLogo } from "./NexusLogo";
 
 export function HomeTopbar() {
-  const { user, loading } = useAuth();
   return (
-    <header className="home-topbar">
-      <Link href="/" style={{ textDecoration: "none" }}>
-        <NexusLogo size="sm" />
-      </Link>
-      {loading ? (
-        <span style={{ width: 92 }} />
-      ) : user ? (
-        <Link href="/dashboard" className="btn btn-primary" style={{ padding: "8px 14px" }}>
-          Dashboard
+    <div className="home-topbar-wrapper">
+      <header className="home-topbar">
+        <Link href="/" style={{ textDecoration: "none", display: "inline-flex" }}>
+          <span className="home-topbar-logo" aria-label="Nexus">
+            nexus<span className="home-logo-dot">.</span>
+          </span>
         </Link>
-      ) : (
-        <Link href="/signup" className="btn btn-primary" style={{ padding: "8px 14px" }}>
+        <Link href="/login" className="btn btn-primary home-topbar-cta">
           Join us
         </Link>
-      )}
-    </header>
+      </header>
+    </div>
   );
 }
 

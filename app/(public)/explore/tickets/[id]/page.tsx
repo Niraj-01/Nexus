@@ -1,57 +1,90 @@
 "use client";
 
-import { use } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ArrowRight, MapPin, Building2, Users } from "lucide-react";
+import {
+  collection,
+  doc,
+  getDoc,
+  onSnapshot,
+  orderBy,
+  query,
+} from "firebase/firestore";
 import { HomeTopbar } from "../../../_components/HomeTopbar";
-import { getTicketById, phaseLabel, type MockTicket, type ContributorStatus } from "@/lib/data/tickets";
+import { db } from "@/lib/firebase/client";
+import type { TicketPhase, TicketUrgency } from "@/lib/schemas/ticket";
 
-const FALLBACK_TICKET: MockTicket = {
-  id: "TKT-0000",
-  title: "Flood relief — Kolhapur, food + shelter",
-  category: "Crisis",
-  subtype: "Natural disaster",
-  description: "Immediate food and shelter support for families displaced by flooding.",
-  location: "Kolhapur, Maharashtra",
-  distance_km: 0,
-  host_entity: "Verified NGO Partner",
-  host_verification_status: "VERIFIED",
-  mode: "RAPID",
-  urgency_level: "EMERGENCY",
-  phase: "EXECUTION",
-  ticket_status: "ACTIVE",
-  deadline: "Auto-expires in 23h 56m",
-  image: "/ticket-food.jpg",
-  needs: [
-    { resource: "Food kits",      unit: "kits",   total_required: 400, total_fulfilled: 208 },
-    { resource: "Shelter spaces", unit: "spaces", total_required: 200, total_fulfilled: 104 },
-    { resource: "Volunteers",     unit: "people", total_required: 40,  total_fulfilled: 8 },
-  ],
-  total_required: 640,
-  total_fulfilled: 320,
-  total_remaining: 320,
-  completion_percentage: 52,
-  max_contribution_possible: 0,
-  contribution_feasibility: false,
-  contribution_impact_percentage: 0,
-  contributors_list: [],
-  contributor_count: 0,
-  urgency: "Emergency",
-  progress: 52,
+type TicketView = {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  urgency: TicketUrgency;
+  rapid: boolean;
+  phase: TicketPhase;
+  progressPct: number;
+  deadline: number;
+  contributorCount: number;
+  hostName: string;
+  region: string;
+  needs: Array<{
+    label: string;
+    unit: string;
+    quantity: number;
+    progressPct: number;
+  }>;
 };
 
-const TABS = ["Contributions", "Proof", "Audit Log"] as const;
-
-const STATUS_LABEL: Record<ContributorStatus, string> = {
-  PLEDGED: "PLEDGED",
-  DELIVERED: "HOST SIGNED",
-  VERIFIED: "FULLY SIGNED",
+type ContributionView = {
+  id: string;
+  contributorOrgId: string;
+  needIndex: number;
+  status: string;
+  offered: {
+    kind: string;
+    quantity: number;
+    unit: string;
+  };
+  createdAt: number;
 };
 
-function hueFor(orgId: string): number {
+const PHASE_LABEL: Record<TicketPhase, string> = {
+  RAISED: "Just raised",
+  OPEN_FOR_CONTRIBUTIONS: "Open for contributions",
+  EXECUTION: "Execution",
+  PENDING_SIGNOFF: "Pending sign-off",
+  CLOSED: "Closed",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  PROPOSED: "PLEDGED",
+  AGREEMENT_PENDING: "AGREEMENT PENDING",
+  COMMITTED: "COMMITTED",
+  EXECUTED: "DELIVERED",
+  SIGNED_OFF: "SIGNED OFF",
+  DISPUTED: "DISPUTED",
+  REJECTED: "REJECTED",
+};
+
+function hueFor(seed: string): number {
   let h = 0;
-  for (let i = 0; i < orgId.length; i++) h = (h * 31 + orgId.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   return h % 360;
+}
+
+function formatDeadline(deadlineMs: number): string {
+  if (!deadlineMs) return "";
+  const ms = deadlineMs - Date.now();
+  if (ms <= 0) return "Deadline passed";
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 48) {
+    const h = hours;
+    const m = Math.floor((ms - h * 3_600_000) / 60_000);
+    return `${h}h ${m}m left`;
+  }
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} left`;
 }
 
 export default function PublicTicketDetailPage({
@@ -60,21 +93,157 @@ export default function PublicTicketDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const ticket = getTicketById(id) ?? { ...FALLBACK_TICKET, id };
-  const isEmergency = ticket.urgency_level === "EMERGENCY";
+  const [ticket, setTicket] = useState<TicketView | null | undefined>(undefined);
+  const [contribs, setContribs] = useState<ContributionView[]>([]);
+  const [orgNames, setOrgNames] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      doc(db, "tickets", id),
+      (snap) => {
+        if (!snap.exists()) {
+          setTicket(null);
+          return;
+        }
+        const x = snap.data() as Record<string, unknown>;
+        const host = (x.host as { name?: string } | undefined) ?? {};
+        const geo = (x.geo as { adminRegion?: string } | undefined) ?? {};
+        const rawNeeds = Array.isArray(x.needs) ? (x.needs as Record<string, unknown>[]) : [];
+        setTicket({
+          id: snap.id,
+          title: String(x.title ?? "Untitled"),
+          description: String(x.description ?? ""),
+          category: String(x.category ?? "—"),
+          urgency: (x.urgency as TicketUrgency) ?? "NORMAL",
+          rapid: Boolean(x.rapid),
+          phase: (x.phase as TicketPhase) ?? "OPEN_FOR_CONTRIBUTIONS",
+          progressPct: Number(x.progressPct ?? 0),
+          deadline: Number(x.deadline ?? 0),
+          contributorCount: Number(x.contributorCount ?? 0),
+          hostName: String(host.name ?? "Verified host"),
+          region: String(geo.adminRegion ?? "—"),
+          needs: rawNeeds.map((n, i) => ({
+            label: String(n.subtype ?? n.resourceCategory ?? `Need ${i + 1}`),
+            unit: String(n.unit ?? ""),
+            quantity: Number(n.quantity ?? 0),
+            progressPct: Number(n.progressPct ?? 0),
+          })),
+        });
+      },
+      () => setTicket(null),
+    );
+    return unsub;
+  }, [id]);
+
+  useEffect(() => {
+    const q = query(
+      collection(db, "tickets", id, "contributions"),
+      orderBy("createdAt", "desc"),
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const out: ContributionView[] = snap.docs.map((d) => {
+          const x = d.data() as Record<string, unknown>;
+          const offered = (x.offered as Record<string, unknown> | undefined) ?? {};
+          return {
+            id: d.id,
+            contributorOrgId: String(x.contributorOrgId ?? ""),
+            needIndex: Number(x.needIndex ?? 0),
+            status: String(x.status ?? "PROPOSED"),
+            offered: {
+              kind: String(offered.kind ?? "Resource"),
+              quantity: Number(offered.quantity ?? 0),
+              unit: String(offered.unit ?? ""),
+            },
+            createdAt: Number(x.createdAt ?? 0),
+          };
+        });
+        setContribs(out);
+      },
+      () => setContribs([]),
+    );
+    return unsub;
+  }, [id]);
+
+  useEffect(() => {
+    const missing = Array.from(
+      new Set(contribs.map((c) => c.contributorOrgId).filter((o) => o && !(o in orgNames))),
+    );
+    if (missing.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      missing.map(async (orgId) => {
+        try {
+          const snap = await getDoc(doc(db, "organizations", orgId));
+          const name = snap.exists() ? String(snap.data().name ?? orgId) : orgId;
+          return [orgId, name] as const;
+        } catch {
+          return [orgId, orgId] as const;
+        }
+      }),
+    ).then((rows) => {
+      if (cancelled) return;
+      setOrgNames((prev) => {
+        const next = { ...prev };
+        for (const [k, v] of rows) next[k] = v;
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [contribs, orgNames]);
+
+  if (ticket === undefined) {
+    return (
+      <div className="landing-shell">
+        <HomeTopbar />
+        <div className="td-shell" style={{ maxWidth: "1200px", margin: "0 auto", padding: "24px 28px" }}>
+          <p className="muted-text">Loading ticket…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (ticket === null) {
+    return (
+      <div className="landing-shell">
+        <HomeTopbar />
+        <div className="td-shell" style={{ maxWidth: "1200px", margin: "0 auto", padding: "24px 28px" }}>
+          <Link href="/" className="td-back">
+            <ArrowLeft size={15} /> Back to home
+          </Link>
+          <p className="muted-text" style={{ marginTop: 24 }}>This ticket is not available.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isEmergency = ticket.urgency === "EMERGENCY";
   const loginHref = `/login?next=/explore/tickets/${ticket.id}`;
+  const deadlineText = formatDeadline(ticket.deadline);
+  const totalRequired = ticket.needs.reduce((sum, n) => sum + n.quantity, 0);
+  const totalFulfilled = ticket.needs.reduce(
+    (sum, n) => sum + Math.round((n.quantity * n.progressPct) / 100),
+    0,
+  );
+  const totalRemaining = Math.max(0, totalRequired - totalFulfilled);
 
   const stats = [
-    { value: String(ticket.contributor_count || 0), label: "orgs responding" },
-    { value: `${ticket.completion_percentage}%`,    label: "covered" },
-    { value: ticket.total_remaining.toLocaleString(), label: "units remaining" },
+    { value: String(ticket.contributorCount), label: "orgs responding" },
+    { value: `${ticket.progressPct}%`, label: "covered" },
+    { value: totalRemaining.toLocaleString(), label: "units remaining" },
   ];
 
   return (
     <div className="landing-shell">
       <HomeTopbar />
 
-      <div className="td-shell" style={{ maxWidth: "1200px", margin: "0 auto", padding: "24px 28px 64px", width: "100%" }}>
+      <div
+        className="td-shell"
+        style={{ maxWidth: "1200px", margin: "0 auto", padding: "24px 28px 64px", width: "100%" }}
+      >
         <Link href="/" className="td-back">
           <ArrowLeft size={15} /> Back to home
         </Link>
@@ -82,34 +251,37 @@ export default function PublicTicketDetailPage({
         <header className={`td-header${isEmergency ? " td-header--emergency" : ""}`}>
           <div className="td-header-top">
             <div className="td-header-pills">
-              <span className="td-id-pill num">{ticket.id}</span>
+              <span className="td-id-pill num">{ticket.id.slice(0, 8)}</span>
               <span className="td-status-pill">
-                <span className="td-status-dot" aria-hidden /> {phaseLabel(ticket.phase)}
+                <span className="td-status-dot" aria-hidden /> {PHASE_LABEL[ticket.phase]}
               </span>
               <span className="td-urgency-label">
-                {ticket.urgency_level} · {ticket.category}
-                {ticket.mode === "RAPID" ? " · rapid flow" : ""}
+                {ticket.urgency} · {ticket.category}
+                {ticket.rapid ? " · rapid flow" : ""}
               </span>
             </div>
-            <span className="td-expires">{ticket.deadline}</span>
+            {deadlineText && <span className="td-expires">{deadlineText}</span>}
           </div>
 
           <h1 className="td-title">{ticket.title}</h1>
 
           <div className="td-meta-row">
             <span className="td-meta-item">
-              <MapPin size={15} /> {ticket.location}
-              {typeof ticket.distance_km === "number" && ticket.distance_km > 0 && (
-                <span className="muted-text num" style={{ marginLeft: 6 }}>· {ticket.distance_km} km</span>
-              )}
+              <MapPin size={15} /> {ticket.region}
             </span>
             <span className="td-meta-item">
-              <Building2 size={15} /> Host: {ticket.host_entity} ({ticket.host_verification_status.toLowerCase()})
+              <Building2 size={15} /> Host: {ticket.hostName}
             </span>
             <span className="td-meta-item">
-              <Users size={15} /> {ticket.contributor_count} contributors
+              <Users size={15} /> {ticket.contributorCount} contributors
             </span>
           </div>
+
+          {ticket.description && (
+            <p className="td-description" style={{ marginTop: 16, color: "var(--color-text-2)", lineHeight: 1.55 }}>
+              {ticket.description}
+            </p>
+          )}
         </header>
 
         <div className="td-2col">
@@ -124,24 +296,30 @@ export default function PublicTicketDetailPage({
 
             <div className="td-coverage">
               <div className="td-coverage-bar">
-                <div className="td-coverage-bar-fill" style={{ width: `${ticket.completion_percentage}%` }} />
+                <div
+                  className="td-coverage-bar-fill"
+                  style={{ width: `${Math.min(100, ticket.progressPct)}%` }}
+                />
               </div>
-              <div className="td-coverage-num num">{ticket.completion_percentage}%</div>
+              <div className="td-coverage-num num">{ticket.progressPct}%</div>
             </div>
 
             <div className="td-resources">
-              {ticket.needs.map((n) => {
-                const pct = n.total_required > 0 ? Math.round((n.total_fulfilled / n.total_required) * 100) : 0;
+              {ticket.needs.map((n, i) => {
+                const fulfilled = Math.round((n.quantity * n.progressPct) / 100);
                 return (
-                  <div key={n.resource} className="td-resource">
+                  <div key={`${n.label}-${i}`} className="td-resource">
                     <div className="td-resource-head">
-                      <span className="td-resource-name">{n.resource}</span>
+                      <span className="td-resource-name">{n.label}</span>
                       <span className="td-resource-count num">
-                        {n.total_fulfilled} / {n.total_required} {n.unit}
+                        {fulfilled} / {n.quantity} {n.unit}
                       </span>
                     </div>
                     <div className="td-resource-bar">
-                      <div className="td-resource-bar-fill" style={{ width: `${Math.min(100, pct)}%` }} />
+                      <div
+                        className="td-resource-bar-fill"
+                        style={{ width: `${Math.min(100, n.progressPct)}%` }}
+                      />
                     </div>
                   </div>
                 );
@@ -172,44 +350,41 @@ export default function PublicTicketDetailPage({
         </div>
 
         <div className="td-tabs" role="tablist">
-          {TABS.map((tab, i) => (
-            <button
-              key={tab}
-              role="tab"
-              aria-selected={i === 0}
-              className={`td-tab${i === 0 ? " is-active" : ""}`}
-              disabled={i !== 0}
-              style={i !== 0 ? { opacity: 0.55, cursor: "not-allowed" } : undefined}
-            >
-              {tab}
-            </button>
-          ))}
+          <button role="tab" aria-selected className="td-tab is-active">
+            Contributions
+          </button>
         </div>
 
         <div className="td-contrib-list">
-          {ticket.contributors_list.length === 0 ? (
-            <div className="td-empty">No contributions yet.</div>
+          {contribs.length === 0 ? (
+            <div className="td-empty">No contributions yet — be the first to help.</div>
           ) : (
-            ticket.contributors_list.map((c) => (
-              <div key={`${c.org_id}-${c.at}`} className="td-contrib-row">
-                <div
-                  className="td-contrib-avatar"
-                  style={{ "--av-hue": hueFor(c.org_id) } as React.CSSProperties}
-                >
-                  {c.org_name.charAt(0)}
-                </div>
-                <div className="td-contrib-info">
-                  <span className="td-contrib-org">{c.org_name}</span>
-                  <span className="td-contrib-detail">
-                    {c.resource} × {c.quantity} {c.unit}
+            contribs.map((c) => {
+              const orgName = orgNames[c.contributorOrgId] ?? c.contributorOrgId.slice(0, 8);
+              const statusKey = STATUS_LABEL[c.status] ? c.status : "PROPOSED";
+              return (
+                <div key={c.id} className="td-contrib-row">
+                  <div
+                    className="td-contrib-avatar"
+                    style={{ "--av-hue": hueFor(c.contributorOrgId || c.id) } as React.CSSProperties}
+                  >
+                    {(orgName || "?").charAt(0).toUpperCase()}
+                  </div>
+                  <div className="td-contrib-info">
+                    <span className="td-contrib-org">{orgName}</span>
+                    <span className="td-contrib-detail">
+                      {c.offered.kind} × {c.offered.quantity} {c.offered.unit}
+                    </span>
+                  </div>
+                  <span className={`td-contrib-status td-contrib-status--${statusSlug(statusKey)}`}>
+                    {STATUS_LABEL[statusKey]}
+                  </span>
+                  <span className="td-contrib-time num">
+                    {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : ""}
                   </span>
                 </div>
-                <span className={`td-contrib-status td-contrib-status--${statusSlug(c.status)}`}>
-                  {STATUS_LABEL[c.status]}
-                </span>
-                <span className="td-contrib-time">{c.at}</span>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -217,6 +392,6 @@ export default function PublicTicketDetailPage({
   );
 }
 
-function statusSlug(s: ContributorStatus) {
-  return STATUS_LABEL[s].toLowerCase().replace(/\s+/g, "-");
+function statusSlug(s: string) {
+  return (STATUS_LABEL[s] ?? s).toLowerCase().replace(/\s+/g, "-");
 }

@@ -9,16 +9,32 @@ import {
   documentId,
   getDocs,
   onSnapshot,
+  orderBy,
   query,
   where,
 } from "firebase/firestore";
 import { ref as storageRef, uploadBytes } from "firebase/storage";
 import { toast } from "sonner";
+import {
+  ArrowRight,
+  Building2,
+  CheckCircle2,
+  ImageIcon,
+  MapPin,
+  ShieldCheck,
+  TrendingUp,
+  Upload,
+  Users,
+  Zap,
+} from "lucide-react";
 import { db, storage } from "@/lib/firebase/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { callAdvancePhase, callRecordSignoff } from "@/lib/callables";
 import { authErrorToMessage } from "@/lib/auth/errors";
 import { PledgeForm } from "./PledgeForm";
+
+const TABS = ["Contributions", "Proof", "Activity"] as const;
+type Tab = (typeof TABS)[number];
 
 function randomRequestId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
@@ -47,6 +63,8 @@ interface TicketDoc {
   progressPct: number;
   participantOrgIds: string[];
   contributorCount: number;
+  createdAt: number;
+  closedAt: number | null;
 }
 
 interface MatchDoc {
@@ -64,18 +82,77 @@ interface ContributionDoc {
   id: string;
   contributorOrgId: string;
   needIndex: number;
-  offered: { quantity: number; unit: string };
-  status: string;
+  offered: { quantity: number; unit: string; kind: string };
+  status:
+    | "PROPOSED"
+    | "AGREEMENT_PENDING"
+    | "COMMITTED"
+    | "EXECUTED"
+    | "SIGNED_OFF"
+    | "DISPUTED"
+    | "REJECTED";
   committedAt?: number;
+  signedOffAt?: number;
 }
 
-const PHASE_LABEL: Record<TicketDoc["phase"], { label: string; tone: string }> = {
-  RAISED: { label: "Raised", tone: "var(--color-muted, #6b7280)" },
-  OPEN_FOR_CONTRIBUTIONS: { label: "Open", tone: "var(--color-accent, #2563eb)" },
-  EXECUTION: { label: "Executing", tone: "var(--color-warn, #d97706)" },
-  PENDING_SIGNOFF: { label: "Awaiting sign-off", tone: "var(--color-warn, #d97706)" },
-  CLOSED: { label: "Closed", tone: "var(--color-muted, #6b7280)" },
+interface PhotoProofDoc {
+  id: string;
+  uploaderOrgId: string;
+  storagePath: string;
+  caption: string;
+  contentType: string;
+  size: number;
+  createdAt: number;
+}
+
+const PHASE_LABEL: Record<TicketDoc["phase"], string> = {
+  RAISED: "Raised",
+  OPEN_FOR_CONTRIBUTIONS: "Open for contributions",
+  EXECUTION: "In execution",
+  PENDING_SIGNOFF: "Awaiting sign-off",
+  CLOSED: "Closed",
 };
+
+const PHASE_DOT_COLOR: Record<TicketDoc["phase"], string> = {
+  RAISED: "#94a3b8",
+  OPEN_FOR_CONTRIBUTIONS: "#2563eb",
+  EXECUTION: "#d97706",
+  PENDING_SIGNOFF: "#f59e0b",
+  CLOSED: "#10b981",
+};
+
+const STATUS_LABEL: Record<ContributionDoc["status"], { label: string; cls: string }> = {
+  PROPOSED:           { label: "Proposed",     cls: "td-contrib-status--pledged" },
+  AGREEMENT_PENDING:  { label: "Agreement",    cls: "td-contrib-status--pledged" },
+  COMMITTED:          { label: "Committed",    cls: "td-contrib-status--pledged" },
+  EXECUTED:           { label: "Host signed",  cls: "td-contrib-status--host-signed" },
+  SIGNED_OFF:         { label: "Fully signed", cls: "td-contrib-status--fully-signed" },
+  DISPUTED:           { label: "Disputed",     cls: "td-contrib-status--host-signed" },
+  REJECTED:           { label: "Rejected",     cls: "td-contrib-status--host-signed" },
+};
+
+function hueFor(orgId: string): number {
+  let h = 0;
+  for (let i = 0; i < orgId.length; i++) h = (h * 31 + orgId.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+
+function formatQty(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  if (n === 0) return "0";
+  if (n < 10) return Number(n.toFixed(1)).toString();
+  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
+}
+
+function formatTime(ms: number | undefined): string {
+  if (!ms) return "—";
+  return new Date(ms).toLocaleString("en-IN", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 export function TicketDetail({ ticketId }: { ticketId: string }) {
   const { user, loading, claims } = useAuth();
@@ -84,9 +161,11 @@ export function TicketDetail({ ticketId }: { ticketId: string }) {
   const [ticket, setTicket] = useState<TicketDoc | null | undefined>(undefined);
   const [match, setMatch] = useState<MatchDoc | null>(null);
   const [contribs, setContribs] = useState<ContributionDoc[]>([]);
+  const [proofs, setProofs] = useState<PhotoProofDoc[]>([]);
   const [orgNames, setOrgNames] = useState<Record<string, string>>({});
+  const [activeTab, setActiveTab] = useState<Tab>("Contributions");
 
-  // Ticket — live listener (drives the progress bar).
+  // Live ticket — drives the progress bar.
   useEffect(() => {
     const unsub = onSnapshot(
       doc(db, "tickets", ticketId),
@@ -130,11 +209,14 @@ export function TicketDetail({ ticketId }: { ticketId: string }) {
             offered: {
               quantity: Number(x.offered?.quantity ?? 0),
               unit: String(x.offered?.unit ?? ""),
+              kind: String(x.offered?.kind ?? ""),
             },
-            status: String(x.status ?? ""),
+            status: (x.status as ContributionDoc["status"]) ?? "COMMITTED",
             committedAt: typeof x.committedAt === "number" ? x.committedAt : undefined,
+            signedOffAt: typeof x.signedOffAt === "number" ? x.signedOffAt : undefined,
           };
         });
+        out.sort((a, b) => (b.committedAt ?? 0) - (a.committedAt ?? 0));
         setContribs(out);
       },
       () => setContribs([]),
@@ -142,14 +224,46 @@ export function TicketDetail({ ticketId }: { ticketId: string }) {
     return unsub;
   }, [ticketId]);
 
+  // Photo proofs — live.
+  useEffect(() => {
+    const q = query(
+      collection(db, "tickets", ticketId, "photoProofs"),
+      orderBy("createdAt", "desc"),
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const out: PhotoProofDoc[] = snap.docs.map((d) => {
+          const x = d.data();
+          return {
+            id: d.id,
+            uploaderOrgId: String(x.uploaderOrgId ?? ""),
+            storagePath: String(x.storagePath ?? ""),
+            caption: String(x.caption ?? ""),
+            contentType: String(x.contentType ?? ""),
+            size: Number(x.size ?? 0),
+            createdAt: Number(x.createdAt ?? 0),
+          };
+        });
+        setProofs(out);
+      },
+      () => setProofs([]),
+    );
+    return unsub;
+  }, [ticketId]);
+
   // Hydrate contributor org names — single batched fetch, not realtime.
-  const contributorOrgIds = useMemo(() => {
+  const allOrgIds = useMemo(() => {
     if (!ticket) return [] as string[];
-    return ticket.participantOrgIds.filter((id) => id !== ticket.hostOrgId);
-  }, [ticket]);
+    const ids = new Set<string>();
+    if (ticket.hostOrgId) ids.add(ticket.hostOrgId);
+    for (const id of ticket.participantOrgIds) ids.add(id);
+    for (const c of contribs) ids.add(c.contributorOrgId);
+    return Array.from(ids);
+  }, [ticket, contribs]);
 
   useEffect(() => {
-    const missing = contributorOrgIds.filter((id) => !orgNames[id]);
+    const missing = allOrgIds.filter((id) => id && !orgNames[id]);
     if (missing.length === 0) return;
     let cancelled = false;
     (async () => {
@@ -167,7 +281,7 @@ export function TicketDetail({ ticketId }: { ticketId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [contributorOrgIds, orgNames]);
+  }, [allOrgIds, orgNames]);
 
   if (loading || ticket === undefined) {
     return <p className="muted-text">Loading ticket…</p>;
@@ -175,9 +289,8 @@ export function TicketDetail({ ticketId }: { ticketId: string }) {
   if (!user) return <p className="muted-text">Sign in to view this ticket.</p>;
   if (ticket === null) {
     return (
-      <div className="card stack">
-        <strong>Ticket not found</strong>
-        <Link href="/dashboard" className="btn btn-ghost">Back to dashboard</Link>
+      <div className="td-shell">
+        <div className="td-empty">Ticket {ticketId.slice(0, 8)} not found.</div>
       </div>
     );
   }
@@ -186,253 +299,351 @@ export function TicketDetail({ ticketId }: { ticketId: string }) {
   const myContribution = orgId
     ? contribs.find((c) => c.contributorOrgId === orgId)
     : undefined;
-  const phase = PHASE_LABEL[ticket.phase];
+  const phaseLabel = PHASE_LABEL[ticket.phase];
+  const isEmergency = ticket.urgency === "EMERGENCY";
+
+  const totalRequired = ticket.needs.reduce((s, n) => s + n.quantity, 0);
+  const totalFulfilled = ticket.needs.reduce((s, n) => s + (n.quantity * n.progressPct) / 100, 0);
+  const totalRemaining = Math.max(0, totalRequired - totalFulfilled);
 
   return (
-    <article className="stack">
-      {/* Hero */}
-      <header className="stack-sm">
-        <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {ticket.rapid && (
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: "0.04em",
-                padding: "2px 8px",
-                borderRadius: 4,
-                background: "var(--color-danger, #dc2626)",
-                color: "white",
-              }}
-            >
-              Emergency
+    <div className="td-shell">
+      {/* ── Header ── */}
+      <header className={`td-header${isEmergency ? " td-header--emergency" : ""}`}>
+        <div className="td-header-top">
+          <div className="td-header-pills">
+            <span className="td-id-pill num">{ticketId.slice(0, 8)}</span>
+            <span className="td-status-pill">
+              <span
+                className="td-status-dot"
+                aria-hidden
+                style={{ background: PHASE_DOT_COLOR[ticket.phase] }}
+              />
+              {phaseLabel}
             </span>
-          )}
-          <span style={{ fontSize: 12, color: phase.tone, fontWeight: 600 }}>
-            {phase.label}
+            <span className="td-urgency-label">
+              {ticket.urgency} · {ticket.category}
+              {ticket.rapid ? " · rapid flow" : " · structured flow"}
+            </span>
+          </div>
+          <span className="td-expires">
+            {ticket.phase === "CLOSED" && ticket.closedAt
+              ? `closed · ${new Date(ticket.closedAt).toLocaleDateString()}`
+              : `deadline · ${new Date(ticket.deadline).toLocaleDateString()}`}
           </span>
-          <span className="muted-text" style={{ fontSize: 12 }}>·</span>
-          <span style={{ fontSize: 12, color: "var(--color-muted, #6b7280)" }}>
-            {ticket.host.name} · {ticket.host.type}
-          </span>
-          {match?.geoDistanceKm !== undefined && (
-            <>
-              <span className="muted-text" style={{ fontSize: 12 }}>·</span>
-              <span className="muted-text" style={{ fontSize: 12 }}>
-                {Math.round(match.geoDistanceKm)} km away
-              </span>
-            </>
-          )}
         </div>
-        <h1
-          style={{
-            fontFamily: "var(--font-display)",
-            fontSize: 32,
-            fontWeight: 700,
-            letterSpacing: "-0.02em",
-            margin: 0,
-          }}
-        >
-          {ticket.title}
-        </h1>
-        <p className="muted-text" style={{ whiteSpace: "pre-wrap" }}>
+
+        <h1 className="td-title">{ticket.title}</h1>
+        <p className="td-contribute-body" style={{ marginTop: 4, whiteSpace: "pre-wrap" }}>
           {ticket.description}
         </p>
-        <span className="muted-text" style={{ fontSize: 13 }}>
-          {ticket.geo.adminRegion} · Deadline {new Date(ticket.deadline).toLocaleDateString()}
-        </span>
-      </header>
 
-      {/* Overall progress */}
-      <div className="card stack-sm">
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-          <strong>Overall progress</strong>
-          <span style={{ fontSize: 24, fontWeight: 700 }}>
-            {Math.round(ticket.progressPct)}%
+        <div className="td-meta-row">
+          <span className="td-meta-item">
+            <MapPin size={15} /> {ticket.geo.adminRegion}
+            {match?.geoDistanceKm !== undefined && match.geoDistanceKm > 0 && (
+              <span className="muted-text num" style={{ marginLeft: 6 }}>
+                · {Math.round(match.geoDistanceKm)} km
+              </span>
+            )}
+          </span>
+          <span className="td-meta-item">
+            <Building2 size={15} /> Host: {ticket.host.name}
+            <ShieldCheck
+              size={14}
+              style={{ color: "var(--color-primary)", marginLeft: 4 }}
+            />
+          </span>
+          <span className="td-meta-item">
+            <Users size={15} /> {ticket.contributorCount} contributor
+            {ticket.contributorCount === 1 ? "" : "s"}
           </span>
         </div>
-        <div
-          style={{
-            height: 6,
-            background: "var(--color-surface-2, #f6f7f9)",
-            borderRadius: 999,
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              width: `${Math.min(100, Math.max(0, ticket.progressPct))}%`,
-              height: "100%",
-              background: "var(--color-accent, #2563eb)",
-              transition: "width 0.4s ease-out",
-            }}
-          />
-        </div>
+      </header>
+
+      {/* ── Two-column ── */}
+      <div className="td-2col">
+        {/* Coverage + needs */}
+        <section className="td-card">
+          <div className="td-card-head">
+            <h2 className="td-card-title">Overall coverage</h2>
+            <span className="td-live">
+              <span className="td-live-dot" aria-hidden />
+              Live · updates in real time
+            </span>
+          </div>
+
+          <div className="td-coverage">
+            <div className="td-coverage-bar">
+              <div
+                className="td-coverage-bar-fill"
+                style={{ width: `${Math.min(100, ticket.progressPct)}%` }}
+              />
+            </div>
+            <div className="td-coverage-num num">{Math.round(ticket.progressPct)}%</div>
+          </div>
+
+          <div className="muted-text" style={{ fontSize: "12px" }}>
+            <span className="num">{formatQty(totalFulfilled)}</span> of{" "}
+            <span className="num">{formatQty(totalRequired)}</span> units fulfilled ·{" "}
+            <span className="num">{formatQty(totalRemaining)}</span> remaining
+          </div>
+
+          <div className="td-resources">
+            {ticket.needs.map((n, i) => {
+              const fulfilled = (n.quantity * n.progressPct) / 100;
+              const pct = Math.min(100, Math.max(0, n.progressPct));
+              return (
+                <div key={i} className="td-resource">
+                  <div className="td-resource-head">
+                    <span className="td-resource-name">
+                      #{i + 1} · {n.resourceCategory}
+                      {n.subtype ? ` · ${n.subtype}` : ""}
+                    </span>
+                    <span className="td-resource-count num">
+                      {formatQty(fulfilled)} / {formatQty(n.quantity)} {n.unit}
+                    </span>
+                  </div>
+                  <div className="td-resource-bar">
+                    <div
+                      className="td-resource-bar-fill"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Right column: viewer-aware action card */}
+        <section className="td-card">
+          {isHost ? (
+            <HostControls
+              ticketId={ticketId}
+              ticket={ticket}
+              orgId={orgId!}
+              proofCount={proofs.length}
+              outstandingSignoffs={contribs.filter((c) => c.status === "EXECUTED").length}
+            />
+          ) : myContribution ? (
+            <ContributorPanel
+              ticketId={ticketId}
+              ticket={ticket}
+              myContribution={myContribution}
+            />
+          ) : ticket.phase === "OPEN_FOR_CONTRIBUTIONS" ? (
+            <ContributeCard
+              ticketId={ticketId}
+              ticket={ticket}
+              match={match}
+            />
+          ) : (
+            <ClosedOrLockedCard ticket={ticket} />
+          )}
+        </section>
       </div>
 
-      {/* Per-need rows */}
-      <section className="stack-sm">
-        <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Needs</h2>
-        {ticket.needs.map((n, i) => {
-          const fulfilled = (n.quantity * n.progressPct) / 100;
-          const remaining = Math.max(0, n.quantity - fulfilled);
-          return (
-            <div key={i} className="card stack-sm">
-              <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-                <strong>
-                  {n.resourceCategory}
-                  {n.subtype ? ` · ${n.subtype}` : ""}
-                </strong>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>
-                  {Math.round(n.progressPct)}%
-                </span>
-              </div>
-              <div className="row" style={{ gap: 16, fontSize: 13, flexWrap: "wrap" }}>
-                <span className="muted-text">
-                  Required: <strong>{n.quantity} {n.unit}</strong>
-                </span>
-                <span className="muted-text">
-                  Fulfilled: <strong>{formatQty(fulfilled)} {n.unit}</strong>
-                </span>
-                <span className="muted-text">
-                  Remaining: <strong>{formatQty(remaining)} {n.unit}</strong>
-                </span>
-              </div>
-              <div
-                style={{
-                  height: 4,
-                  background: "var(--color-surface-2, #f6f7f9)",
-                  borderRadius: 999,
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    width: `${Math.min(100, Math.max(0, n.progressPct))}%`,
-                    height: "100%",
-                    background: "var(--color-accent, #2563eb)",
-                    transition: "width 0.4s ease-out",
-                  }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </section>
-
-      {/* Your contribution potential — match-doc backed */}
-      {!isHost && match?.contributionFeasibility && !myContribution && (
-        <div
-          className="card stack-sm"
-          style={{
-            background: "var(--color-surface-2, #f6f7f9)",
-          }}
-        >
-          <strong>Your contribution potential</strong>
-          <p style={{ margin: 0, fontSize: 14 }}>
-            You can fill <strong>{Math.round(match.contributionImpactPct)}%</strong>{" "}
-            of remaining
-            {ticket.needs[match.bestNeedIndex] && (
-              <>
-                {" "}
-                ({formatQty(match.maxContributionPossible)}{" "}
-                {ticket.needs[match.bestNeedIndex].unit})
-              </>
+      {/* ── Tabs ── */}
+      <div className="td-tabs" role="tablist">
+        {TABS.map((tab) => (
+          <button
+            key={tab}
+            role="tab"
+            aria-selected={activeTab === tab}
+            onClick={() => setActiveTab(tab)}
+            className={`td-tab${activeTab === tab ? " is-active" : ""}`}
+          >
+            {tab}
+            {tab === "Proof" && proofs.length > 0 && (
+              <span className="num muted-text" style={{ marginLeft: 6 }}>
+                · {proofs.length}
+              </span>
             )}
-            .
-          </p>
-        </div>
-      )}
+            {tab === "Contributions" && contribs.length > 0 && (
+              <span className="num muted-text" style={{ marginLeft: 6 }}>
+                · {contribs.length}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
 
-      {/* Pledge CTA */}
-      {!isHost && (
-        <PledgeCTA
-          ticketId={ticketId}
+      {/* ── Tab content ── */}
+      {activeTab === "Contributions" && (
+        <ContributionsTab
           ticket={ticket}
-          match={match}
-          alreadyPledged={Boolean(myContribution)}
+          contribs={contribs}
+          orgNames={orgNames}
         />
       )}
 
-      {myContribution && (
-        <div className="card stack-sm" style={{ borderColor: "var(--color-accent, #2563eb)" }}>
-          <strong>Your contribution is committed</strong>
-          <span style={{ fontSize: 13 }}>
-            {formatQty(myContribution.offered.quantity)} {myContribution.offered.unit} ·
-            status <strong>{myContribution.status}</strong>
-          </span>
-        </div>
+      {activeTab === "Proof" && (
+        <ProofTab proofs={proofs} orgNames={orgNames} />
       )}
 
-      {/* Host lifecycle controls */}
-      {isHost && (
-        <HostLifecyclePanel ticketId={ticketId} ticket={ticket} />
+      {activeTab === "Activity" && (
+        <ActivityTab
+          ticket={ticket}
+          contribs={contribs}
+          proofs={proofs}
+          orgNames={orgNames}
+        />
       )}
-
-      {/* Contributor signoff panel */}
-      {!isHost && myContribution && ticket.phase === "PENDING_SIGNOFF" && myContribution.status === "EXECUTED" && (
-        <SignoffPanel ticketId={ticketId} />
-      )}
-
-      {/* Contributors strip */}
-      {contributorOrgIds.length > 0 && (
-        <section className="stack-sm">
-          <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>
-            Contributors ({ticket.contributorCount})
-          </h2>
-          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-            {contributorOrgIds.map((id) => (
-              <span
-                key={id}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  background: "var(--color-surface-2, #f6f7f9)",
-                  fontSize: 13,
-                }}
-              >
-                {orgNames[id] ?? id.slice(0, 6)}
-              </span>
-            ))}
-          </div>
-        </section>
-      )}
-    </article>
+    </div>
   );
 }
 
-function PledgeCTA({
+// ── Right-column panels ────────────────────────────────────────────────
+
+function ContributeCard({
   ticketId,
   ticket,
   match,
-  alreadyPledged,
 }: {
   ticketId: string;
   ticket: TicketDoc;
   match: MatchDoc | null;
-  alreadyPledged: boolean;
 }) {
-  if (alreadyPledged) return null;
-  if (ticket.phase !== "OPEN_FOR_CONTRIBUTIONS") return null;
+  const canPledge = match?.contributionFeasibility ?? false;
+
   return (
-    <PledgeForm
-      ticketId={ticketId}
-      needs={ticket.needs}
-      match={match}
-    />
+    <>
+      <h2 className="td-card-title">Contribute to this ticket</h2>
+      <p className="td-contribute-body">
+        {ticket.rapid
+          ? "Rapid flow — your pledge reflects immediately. Delivery verification handled after the fact."
+          : "Structured flow — pledge is committed immediately and verified by you and the host on completion."}
+      </p>
+
+      {match && (
+        <div className="stack" style={{ gap: 6, margin: "10px 0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span className="muted-text">You can contribute up to</span>
+            <span className="num" style={{ fontWeight: 600 }}>
+              {formatQty(match.maxContributionPossible)}{" "}
+              {ticket.needs[match.bestNeedIndex]?.unit ?? "units"}
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span className="muted-text" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <TrendingUp size={12} /> Your impact
+            </span>
+            <span className="num" style={{ fontWeight: 600, color: "var(--color-primary)" }}>
+              +{Math.round(match.contributionImpactPct)}%
+            </span>
+          </div>
+        </div>
+      )}
+
+      {canPledge ? (
+        <PledgeForm ticketId={ticketId} needs={ticket.needs} match={match} />
+      ) : (
+        <div className="td-empty" style={{ padding: 20 }}>
+          {match
+            ? "No matching capacity available for this ticket."
+            : "You don't have a matching resource for this ticket. List a resource in the right category to start receiving matches."}
+        </div>
+      )}
+
+      {ticket.rapid && canPledge && (
+        <div
+          className="badge badge-emergency"
+          style={{
+            marginTop: 4,
+            alignSelf: "flex-start",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+          }}
+        >
+          <Zap size={11} /> Rapid mode active
+        </div>
+      )}
+    </>
   );
 }
 
-function HostLifecyclePanel({
+function ContributorPanel({
   ticketId,
   ticket,
+  myContribution,
 }: {
   ticketId: string;
   ticket: TicketDoc;
+  myContribution: ContributionDoc;
 }) {
-  const { claims } = useAuth();
-  const orgId = claims?.orgId ?? null;
+  const status = STATUS_LABEL[myContribution.status];
+  return (
+    <>
+      <h2 className="td-card-title">Your contribution</h2>
+      <div
+        style={{
+          padding: 16,
+          border: "1px solid rgba(5, 150, 105, 0.22)",
+          borderRadius: 8,
+          background: "rgba(5, 150, 105, 0.08)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <CheckCircle2 size={18} style={{ color: "var(--color-success)" }} />
+          <strong style={{ fontSize: 14 }}>{status?.label ?? "Committed"}</strong>
+        </div>
+        <p style={{ fontSize: 14, margin: 0 }}>
+          <span className="num">{formatQty(myContribution.offered.quantity)}</span>{" "}
+          {myContribution.offered.unit} of {myContribution.offered.kind}
+          {myContribution.committedAt && (
+            <span className="muted-text">
+              {" "}· committed {formatTime(myContribution.committedAt)}
+            </span>
+          )}
+        </p>
+      </div>
+
+      {ticket.phase === "PENDING_SIGNOFF" && myContribution.status === "EXECUTED" && (
+        <SignoffPanel ticketId={ticketId} />
+      )}
+
+      {myContribution.status === "SIGNED_OFF" && (
+        <p className="muted-text" style={{ fontSize: 13, margin: 0 }}>
+          You&apos;ve confirmed delivery. The ticket auto-closes once every contributor signs off.
+        </p>
+      )}
+    </>
+  );
+}
+
+function ClosedOrLockedCard({ ticket }: { ticket: TicketDoc }) {
+  const isClosed = ticket.phase === "CLOSED";
+  return (
+    <>
+      <h2 className="td-card-title">
+        {isClosed ? "Ticket closed" : "No longer accepting pledges"}
+      </h2>
+      <p className="td-contribute-body">
+        {isClosed
+          ? "All contributions have been verified and badges minted to participants."
+          : `Currently in ${PHASE_LABEL[ticket.phase].toLowerCase()}. New pledges open only during the contribution phase.`}
+      </p>
+    </>
+  );
+}
+
+// ── Host controls ──────────────────────────────────────────────────────
+
+function HostControls({
+  ticketId,
+  ticket,
+  orgId,
+  proofCount,
+  outstandingSignoffs,
+}: {
+  ticketId: string;
+  ticket: TicketDoc;
+  orgId: string;
+  proofCount: number;
+  outstandingSignoffs: number;
+}) {
   const [busy, setBusy] = useState(false);
   const [proofBusy, setProofBusy] = useState(false);
   const requestId = useMemo(randomRequestId, [ticket.phase]);
@@ -450,10 +661,6 @@ function HostLifecyclePanel({
   }
 
   async function uploadProof(file: File) {
-    if (!orgId) {
-      toast.error("Missing org claim — try signing out and back in.");
-      return;
-    }
     setProofBusy(true);
     try {
       const ext = file.name.includes(".") ? file.name.split(".").pop() : "bin";
@@ -478,66 +685,128 @@ function HostLifecyclePanel({
 
   if (ticket.phase === "OPEN_FOR_CONTRIBUTIONS") {
     return (
-      <div className="card stack-sm">
-        <strong>Host controls</strong>
-        <p className="muted-text" style={{ margin: 0, fontSize: 13 }}>
+      <>
+        <h2 className="td-card-title">Host controls</h2>
+        <p className="td-contribute-body">
           When contributions look sufficient, advance the ticket to execution.
-          {ticket.progressPct < 100 && " You're below 100% — `advancedEarly` will be flagged."}
+          {ticket.progressPct < 100 && (
+            <>
+              {" "}<strong>You&apos;re at {Math.round(ticket.progressPct)}%</strong> — moving forward early flags <code>advancedEarly</code> on the ticket.
+            </>
+          )}
         </p>
         <button
           type="button"
-          className="btn btn-primary"
+          className="td-pledge-btn"
           onClick={() => advance("EXECUTION")}
           disabled={busy}
         >
-          {busy ? "Advancing…" : "Move to execution"}
+          {busy ? "Advancing…" : (
+            <>
+              Move to execution <ArrowRight size={16} strokeWidth={2.5} />
+            </>
+          )}
         </button>
-      </div>
+      </>
     );
   }
 
   if (ticket.phase === "EXECUTION") {
     return (
-      <div className="card stack-sm">
-        <strong>Host controls — execution</strong>
-        <p className="muted-text" style={{ margin: 0, fontSize: 13 }}>
-          Upload at least one photo proof, then mark execution complete.
+      <>
+        <h2 className="td-card-title">Host controls — execution</h2>
+        <p className="td-contribute-body">
+          Upload at least one photo proof, then mark execution complete to send the ticket to contributor sign-off.
         </p>
-        <input
-          type="file"
-          accept="image/*"
-          disabled={proofBusy}
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void uploadProof(f);
-            e.target.value = "";
+
+        <label
+          className="row"
+          style={{
+            gap: 10,
+            padding: 14,
+            border: "1px dashed var(--color-border)",
+            borderRadius: 8,
+            cursor: proofBusy ? "wait" : "pointer",
+            background: "var(--color-surface-2)",
           }}
-        />
+        >
+          <Upload size={18} />
+          <span style={{ fontSize: 14 }}>
+            {proofBusy ? "Uploading…" : "Upload photo proof"}
+          </span>
+          <input
+            type="file"
+            accept="image/*"
+            disabled={proofBusy}
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void uploadProof(f);
+              e.target.value = "";
+            }}
+          />
+        </label>
+
+        <p className="muted-text" style={{ fontSize: 12, margin: 0 }}>
+          {proofCount === 0
+            ? "No proofs uploaded yet."
+            : `${proofCount} proof${proofCount === 1 ? "" : "s"} uploaded.`}
+        </p>
+
         <button
           type="button"
-          className="btn btn-primary"
+          className="td-pledge-btn"
           onClick={() => advance("PENDING_SIGNOFF")}
-          disabled={busy}
+          disabled={busy || proofCount === 0}
+          style={proofCount === 0 ? { opacity: 0.55 } : undefined}
         >
           {busy ? "Advancing…" : "Mark execution complete"}
         </button>
-      </div>
+      </>
     );
   }
 
   if (ticket.phase === "PENDING_SIGNOFF") {
     return (
-      <div className="card stack-sm">
-        <strong>Awaiting contributor signoffs</strong>
-        <p className="muted-text" style={{ margin: 0, fontSize: 13 }}>
-          The ticket closes automatically once every contributor has approved.
+      <>
+        <h2 className="td-card-title">Awaiting contributor sign-off</h2>
+        <p className="td-contribute-body">
+          The ticket auto-closes once every contributor has confirmed delivery. A single dispute pauses closure for review.
         </p>
-      </div>
+        <div
+          style={{
+            padding: 14,
+            background: "var(--color-surface-2)",
+            border: "1px solid var(--color-border)",
+            borderRadius: 8,
+          }}
+        >
+          <strong style={{ fontSize: 14, display: "block", marginBottom: 4 }}>
+            {outstandingSignoffs} contributor{outstandingSignoffs === 1 ? "" : "s"} still to confirm
+          </strong>
+          <span className="muted-text" style={{ fontSize: 12 }}>
+            Contributors see a sign-off button when they open this ticket.
+          </span>
+        </div>
+      </>
     );
   }
 
-  return null;
+  return (
+    <>
+      <h2 className="td-card-title">
+        Ticket {ticket.phase === "CLOSED" ? "closed" : ticket.phase.toLowerCase()}
+      </h2>
+      <p className="td-contribute-body">
+        {ticket.phase === "CLOSED"
+          ? "Badges have been minted to all participants."
+          : "No host actions are available in the current phase."}
+      </p>
+    </>
+  );
 }
+
+// ── Signoff panel (contributor) ────────────────────────────────────────
 
 function SignoffPanel({ ticketId }: { ticketId: string }) {
   const [busy, setBusy] = useState(false);
@@ -558,26 +827,38 @@ function SignoffPanel({ ticketId }: { ticketId: string }) {
   }
 
   return (
-    <div className="card stack-sm" style={{ borderColor: "var(--color-accent, #2563eb)" }}>
-      <strong>Sign off on this delivery</strong>
-      <p className="muted-text" style={{ margin: 0, fontSize: 13 }}>
+    <div
+      style={{
+        padding: 14,
+        border: "1px solid var(--color-border)",
+        borderRadius: 8,
+        background: "var(--color-surface-2)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <strong style={{ fontSize: 14 }}>Sign off on this delivery</strong>
+      <p className="muted-text" style={{ fontSize: 12, margin: 0 }}>
         Confirm what the host delivered, or flag a dispute for admin review.
       </p>
       {showDispute && (
         <textarea
-          className="textarea"
+          className="textarea input"
           placeholder="Why are you disputing? (optional)"
           value={note}
           onChange={(e) => setNote(e.target.value)}
+          rows={3}
           disabled={busy}
         />
       )}
       <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
         <button
           type="button"
-          className="btn btn-primary"
+          className="td-pledge-btn"
           onClick={() => submit("APPROVED")}
           disabled={busy}
+          style={{ flex: 1 }}
         >
           {busy ? "Submitting…" : "Confirm delivery"}
         </button>
@@ -605,9 +886,194 @@ function SignoffPanel({ ticketId }: { ticketId: string }) {
   );
 }
 
-function formatQty(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  if (n === 0) return "0";
-  if (n < 10) return Number(n.toFixed(1)).toString();
-  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
+// ── Tabs ───────────────────────────────────────────────────────────────
+
+function ContributionsTab({
+  ticket,
+  contribs,
+  orgNames,
+}: {
+  ticket: TicketDoc;
+  contribs: ContributionDoc[];
+  orgNames: Record<string, string>;
+}) {
+  if (contribs.length === 0) {
+    return <div className="td-empty">No contributions yet.</div>;
+  }
+  return (
+    <div className="td-contrib-list">
+      {contribs.map((c) => {
+        const orgName = orgNames[c.contributorOrgId] ?? c.contributorOrgId.slice(0, 6);
+        const need = ticket.needs[c.needIndex];
+        const status = STATUS_LABEL[c.status] ?? { label: c.status, cls: "" };
+        return (
+          <div key={c.id} className="td-contrib-row">
+            <div
+              className="td-contrib-avatar"
+              style={{ "--av-hue": hueFor(c.contributorOrgId) } as React.CSSProperties}
+            >
+              {orgName.charAt(0).toUpperCase()}
+            </div>
+            <div className="td-contrib-info">
+              <span className="td-contrib-org">{orgName}</span>
+              <span className="td-contrib-detail">
+                {need?.resourceCategory ?? c.offered.kind} ×{" "}
+                {formatQty(c.offered.quantity)} {c.offered.unit}
+              </span>
+            </div>
+            <span className={`td-contrib-status ${status.cls}`}>{status.label}</span>
+            <span className="td-contrib-time">{formatTime(c.committedAt)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProofTab({
+  proofs,
+  orgNames,
+}: {
+  proofs: PhotoProofDoc[];
+  orgNames: Record<string, string>;
+}) {
+  if (proofs.length === 0) {
+    return <div className="td-empty">No proof uploads yet.</div>;
+  }
+  return (
+    <div className="stack" style={{ gap: 10 }}>
+      {proofs.map((p) => {
+        const author = orgNames[p.uploaderOrgId] ?? p.uploaderOrgId.slice(0, 6);
+        return (
+          <div
+            key={p.id}
+            className="td-contrib-row"
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              gap: 4,
+            }}
+          >
+            <div className="row" style={{ gap: 8, alignItems: "center" }}>
+              <ImageIcon size={16} style={{ color: "var(--color-primary)" }} />
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{author}</span>
+              <span className="muted-text" style={{ fontSize: 12 }}>
+                · {(p.size / 1024).toFixed(0)} KB · {p.contentType}
+              </span>
+            </div>
+            {p.caption && <span className="td-contrib-detail">{p.caption}</span>}
+            <span className="td-contrib-time">{formatTime(p.createdAt)}</span>
+            <span className="muted-text" style={{ fontSize: 11, fontFamily: "monospace" }}>
+              {p.storagePath}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ActivityTab({
+  ticket,
+  contribs,
+  proofs,
+  orgNames,
+}: {
+  ticket: TicketDoc;
+  contribs: ContributionDoc[];
+  proofs: PhotoProofDoc[];
+  orgNames: Record<string, string>;
+}) {
+  type Event = { id: string; at: number; title: string; detail: string };
+  const events: Event[] = [];
+
+  events.push({
+    id: "created",
+    at: ticket.createdAt,
+    title: "Ticket created",
+    detail: `${ticket.host.name} opened this ${ticket.rapid ? "rapid" : "structured"} ticket.`,
+  });
+
+  for (const c of contribs) {
+    if (!c.committedAt) continue;
+    const orgName = orgNames[c.contributorOrgId] ?? c.contributorOrgId.slice(0, 6);
+    events.push({
+      id: `c-${c.id}`,
+      at: c.committedAt,
+      title: `${orgName} pledged`,
+      detail: `${formatQty(c.offered.quantity)} ${c.offered.unit} of ${c.offered.kind}`,
+    });
+  }
+
+  for (const p of proofs) {
+    const orgName = orgNames[p.uploaderOrgId] ?? p.uploaderOrgId.slice(0, 6);
+    events.push({
+      id: `p-${p.id}`,
+      at: p.createdAt,
+      title: `${orgName} uploaded proof`,
+      detail: p.caption || "Photo proof attached",
+    });
+  }
+
+  for (const c of contribs) {
+    if (!c.signedOffAt) continue;
+    const orgName = orgNames[c.contributorOrgId] ?? c.contributorOrgId.slice(0, 6);
+    events.push({
+      id: `s-${c.id}`,
+      at: c.signedOffAt,
+      title: `${orgName} signed off`,
+      detail: c.status === "DISPUTED" ? "Disputed delivery" : "Confirmed delivery",
+    });
+  }
+
+  if (ticket.closedAt) {
+    events.push({
+      id: "closed",
+      at: ticket.closedAt,
+      title: "Ticket closed",
+      detail: "All contributions verified. Badges minted to participants.",
+    });
+  }
+
+  events.sort((a, b) => b.at - a.at);
+
+  if (events.length === 0) {
+    return <div className="td-empty">No activity yet.</div>;
+  }
+
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      {events.map((e) => (
+        <div
+          key={e.id}
+          className="td-contrib-row"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-start",
+            gap: 4,
+          }}
+        >
+          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{e.title}</span>
+          <span className="td-contrib-detail">{e.detail}</span>
+          <span className="td-contrib-time">{formatTime(e.at)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Used by the back link in tickets/[id]/page.tsx — re-export here so the
+// page wrapper can render the back link consistently.
+export function TicketDetailBack() {
+  return (
+    <Link
+      href="/tickets"
+      className="td-back"
+      style={{ textDecoration: "none" }}
+    >
+      ← Back to tickets
+    </Link>
+  );
 }

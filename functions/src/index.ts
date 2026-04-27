@@ -36,6 +36,8 @@ export { emergencyExpirySweep } from "./scheduled/emergencyExpirySweep";
 export { approveOrg } from "./callables/approveOrg";
 export { raiseTicket } from "./callables/raiseTicket";
 export { createResource } from "./callables/createResource";
+export { updateResource } from "./callables/updateResource";
+export { retryResourceEmbedding } from "./callables/retryResourceEmbedding";
 export { pledge } from "./callables/pledge";
 export { signAgreement } from "./callables/signAgreement";
 export { advancePhase } from "./callables/advancePhase";

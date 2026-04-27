@@ -6,6 +6,7 @@ import {
   type Auth,
 } from "firebase/auth";
 import {
+  initializeFirestore,
   getFirestore,
   connectFirestoreEmulator,
   type Firestore,
@@ -42,8 +43,27 @@ export const firebaseApp: FirebaseApp = getApps().length
   ? getApp()
   : initializeApp(firebaseConfig);
 
+// Cache singletons on globalThis so Next.js HMR doesn't create stale duplicates
+// (re-evaluating this module would otherwise leak Firestore listeners and trip
+// the SDK's "Unexpected state (ID: ca9)" internal assertion).
+type GlobalCache = {
+  __nexusFirestore?: Firestore;
+  __nexusEmulatorsConnected?: boolean;
+};
+const g = globalThis as unknown as GlobalCache;
+
 export const auth: Auth = getAuth(firebaseApp);
-export const db: Firestore = getFirestore(firebaseApp);
+export const db: Firestore =
+  g.__nexusFirestore ??
+  (g.__nexusFirestore = (() => {
+    try {
+      return initializeFirestore(firebaseApp, {
+        experimentalAutoDetectLongPolling: true,
+      });
+    } catch {
+      return getFirestore(firebaseApp);
+    }
+  })());
 export const storage: FirebaseStorage = getStorage(firebaseApp);
 export const functions: Functions = getFunctions(firebaseApp, "asia-south1");
 export const googleProvider = new GoogleAuthProvider();
@@ -65,8 +85,6 @@ export function getAppCheckClient(): AppCheck | null {
 }
 
 if (typeof window !== "undefined" && USE_EMULATORS) {
-  // Guard against HMR double-connects with a module-level flag.
-  const g = globalThis as unknown as { __nexusEmulatorsConnected?: boolean };
   if (!g.__nexusEmulatorsConnected) {
     connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
     connectFirestoreEmulator(db, "127.0.0.1", 8080);

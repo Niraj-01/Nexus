@@ -66,7 +66,7 @@ run(
     "--project",
     projectId,
     "--only",
-    "auth",
+    "auth,firestore,storage,functions",
   ],
 );
 

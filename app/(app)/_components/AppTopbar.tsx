@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { signOutUser } from "@/lib/auth/actions";
@@ -21,7 +21,14 @@ function initial(name: string | null | undefined, email: string | null | undefin
 export function AppTopbar() {
   const { user } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const [busy, setBusy] = useState(false);
+
+  const navLinks: Array<{ href: string; label: string }> = [
+    { href: "/dashboard", label: "Dashboard" },
+    { href: "/tickets", label: "Tickets" },
+    { href: "/resources", label: "Resources" },
+  ];
 
   async function onSignOut() {
     setBusy(true);
@@ -37,25 +44,42 @@ export function AppTopbar() {
   const avatar = initial(user?.displayName, user?.email);
 
   return (
-    <header className="app-topbar">
-      <Link href="/" aria-label="Nexus home" style={{ textDecoration: "none" }}>
-        <NexusLogo size="sm" />
-      </Link>
-      <div className="row" style={{ gap: 8 }}>
-        <Link href="/profile" className="profile-pill" aria-label="Account">
-          <span className="profile-pill__avatar" aria-hidden>{avatar}</span>
-          <span className="profile-pill__label">{label}</span>
+    <div className="app-topbar-wrapper">
+      <header className="app-topbar">
+        <Link href="/" aria-label="Nexus home" style={{ textDecoration: "none" }}>
+          <NexusLogo size="sm" />
         </Link>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={onSignOut}
-          disabled={busy}
-          style={{ padding: "8px 14px", fontSize: 13 }}
-        >
-          {busy ? "Signing out…" : "Sign out"}
-        </button>
-      </div>
-    </header>
+        <nav className="app-topbar__nav" aria-label="Primary">
+          {navLinks.map((link) => {
+            const active =
+              pathname === link.href || pathname?.startsWith(link.href + "/");
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`app-topbar__nav-link${active ? " is-active" : ""}`}
+              >
+                {link.label}
+              </Link>
+            );
+          })}
+        </nav>
+        <div className="row" style={{ gap: 8 }}>
+          <Link href="/profile" className="profile-pill" aria-label="Account">
+            <span className="profile-pill__avatar" aria-hidden>{avatar}</span>
+            <span className="profile-pill__label">{label}</span>
+          </Link>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={onSignOut}
+            disabled={busy}
+            style={{ padding: "8px 14px", fontSize: 13 }}
+          >
+            {busy ? "Signing out…" : "Sign out"}
+          </button>
+        </div>
+      </header>
+    </div>
   );
 }

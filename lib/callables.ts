@@ -4,9 +4,11 @@ import { httpsCallable, type HttpsCallableResult } from "firebase/functions";
 import { functions } from "@/lib/firebase/client";
 import type {
   AdvancePhaseInput,
+  EmbeddingStatus,
   PledgeInput,
   RaiseTicketInput,
   RecordSignoffInput,
+  ResourceClientUpdate,
   ResourceClientWrite,
   TicketPhase,
 } from "@/lib/schemas";
@@ -29,6 +31,16 @@ export const callCreateResource = make<
   ResourceClientWrite,
   { resourceId: string }
 >("createResource");
+
+export const callUpdateResource = make<
+  ResourceClientUpdate,
+  { resourceId: string; embeddingStatus: EmbeddingStatus | "skipped" }
+>("updateResource");
+
+export const callRetryResourceEmbedding = make<
+  { resourceId: string },
+  { resourceId: string; embeddingStatus: EmbeddingStatus | "skipped" }
+>("retryResourceEmbedding");
 
 export const callPledge = make<
   PledgeInput,

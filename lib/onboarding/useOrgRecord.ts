@@ -35,9 +35,15 @@ export function useOrgRecord(uid: string | null | undefined): OrgRecordState {
       setState({ loading: false, exists: false });
       return;
     }
+
+    // Guard against stale callbacks from React Strict Mode's double-invoke or
+    // rapid uid changes — any callback that fires after cleanup is a no-op.
+    let mounted = true;
+
     const unsub = onSnapshot(
       doc(db, "organizations", uid),
       (snap) => {
+        if (!mounted) return;
         if (!snap.exists()) {
           setState({ loading: false, exists: false });
           return;
@@ -62,9 +68,15 @@ export function useOrgRecord(uid: string | null | undefined): OrgRecordState {
           isComplete: isOrgComplete({ type, docsUploaded }),
         });
       },
-      () => setState({ loading: false, exists: false }),
+      () => {
+        if (mounted) setState({ loading: false, exists: false });
+      },
     );
-    return unsub;
+
+    return () => {
+      mounted = false;
+      unsub();
+    };
   }, [uid]);
 
   return state;

@@ -13,7 +13,7 @@ import { withIdempotency } from "../lib/idempotency";
  *
  * App Check enforced (plan §A.4). Idempotent via `withIdempotency`.
  */
-export const pledge = onCall({ enforceAppCheck: true, cors: true }, async (request) => {
+export const pledge = onCall({ enforceAppCheck: true, cors: true, invoker: "public" }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Sign in required.");
   }

@@ -52,3 +52,13 @@ export const ResourceClientWriteSchema = ResourceSchema.omit({
 export type ResourceClientWrite = z.infer<typeof ResourceClientWriteSchema>;
 /** Pre-defaults shape — used by the react-hook-form form type. */
 export type ResourceClientWriteInput = z.input<typeof ResourceClientWriteSchema>;
+
+/**
+ * Update payload — same editable fields as create plus the resourceId.
+ * Server enforces ownership and refuses to touch status/embedding fields.
+ */
+export const ResourceClientUpdateSchema = ResourceClientWriteSchema.extend({
+  resourceId: z.string().min(1),
+});
+export type ResourceClientUpdate = z.infer<typeof ResourceClientUpdateSchema>;
+export type ResourceClientUpdateInput = z.input<typeof ResourceClientUpdateSchema>;

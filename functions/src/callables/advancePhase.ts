@@ -22,7 +22,7 @@ import { withIdempotency } from "../lib/idempotency";
  *
  * App Check enforced. Idempotent via `withIdempotency`.
  */
-export const advancePhase = onCall({ enforceAppCheck: true, cors: true }, async (request) => {
+export const advancePhase = onCall({ enforceAppCheck: true, cors: true, invoker: "public" }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Sign in required.");
   }

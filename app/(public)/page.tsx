@@ -1,12 +1,12 @@
 import { HomeTopbar } from "./_components/HomeTopbar";
 import { FeaturedStoryShow } from "./_components/FeaturedStoryShow";
-import { TicketCard } from "@/components/TicketCard";
-import { MOCK_TICKETS, ACTIVE_PHASES } from "@/lib/data/tickets";
+
+import { PublicActiveTickets } from "./_components/PublicActiveTickets";
 
 export const revalidate = 30;
 
 export default function HomePage() {
-  const activeTickets = MOCK_TICKETS.filter((t) => ACTIVE_PHASES.includes(t.phase));
+
 
   return (
     <div className="landing-shell">
@@ -25,15 +25,7 @@ export default function HomePage() {
             Open requests from verified NGOs — see where your organisation can help.
           </p>
         </div>
-        <div className="tkt-grid">
-          {activeTickets.map((ticket) => (
-            <TicketCard
-              key={ticket.id}
-              ticket={ticket}
-              hrefBase="/explore/tickets"
-            />
-          ))}
-        </div>
+        <PublicActiveTickets />
       </section>
     </div>
   );
