@@ -607,4 +607,98 @@ New exports added to [`functions/src/index.ts`](../functions/src/index.ts):
 
 ---
 
+# Part G — Quick test cheat sheet (read this if you want to skip everything else)
+
+This is the entire test compressed into one page. Open Firebase Console → Firestore in a side tab so you can watch the writes land as you click through.
+
+> **Project:** `buffet-493105` · **Firestore Console:** https://console.firebase.google.com/project/buffet-493105/firestore
+
+## The 14-step happy path — every action, what you see, what hits Firestore
+
+| # | Who | Action | UI outcome | Firestore check |
+|---|---|---|---|---|
+| 1 | Niraj, Albin, Dhrupad | `/signup` → Google sign-in → fill `/onboard` form | Dashboard shows **"Pending admin approval"** (was "Pending review") | `users/{uid}` exists with `orgId: uid`; `organizations/{uid}` with `status: "PENDING_REVIEW"` |
+| 2 | Dhrupad | `/admin` → click **Approve** on each pending org | All 3 cards disappear; the other two users' pages auto-flip to live within ~1s (no sign-out) | `organizations/{*}.status: "ACTIVE"`; Auth → user → custom claims `{role, orgId}` set |
+| 3 | Albin | `/resources/new` → fill FUNDS form, submit | Resource appears in `/resources` list; status `AVAILABLE`; **"Embedding…"** badge for ~10–30s, then **"Embedded"** | `resources/{id}` with `category: "FUNDS"`, `quantity: 100000`, `reservedQuantity: 0`, `status: "AVAILABLE"`, `embeddingStatus: "pending"` → `"ok"` (embedding trigger writes the 768-d vector) |
+| 4 | Dhrupad | Same, MANUFACTURING resource | Same | Same shape — wait until `embeddingStatus === "ok"` before step 5 |
+| 5 | Niraj | Topbar **"Raise a ticket"** → fill 2-need form, submit | Toast "Ticket raised", redirects to `/tickets/<id>`, phase chip **"Open"**, progress 0% | `tickets/{id}` with `phase: "OPEN_FOR_CONTRIBUTIONS"`, `progressPct: 0`, `participantOrgIds: [niraj]`. Within ~10s, `onTicketCreated` writes `matches/{ticketId}__{albinOrgId}` and `matches/{ticketId}__{dhrupadOrgId}` |
+| 6 | Albin, Dhrupad | `/dashboard` → see ticket card under **"Recommended for you"** | Card shows score-based reason, "fills X%" chip, **"View"** button. NOT under "Active tickets" yet | `matches/{ticketId__orgId}` for each: `score: 0–1`, `topResourceId`, `bestNeedIndex`, `contributionImpactPct`, `reason` |
+| 7 | Albin | Open ticket → "Pledge to this ticket" → pick resource, leave quantity at 40000 → **"Submit for approval"** | Toast **"Pledge proposed."** "Your contributions (1)" card shows `40000 INR · status PROPOSED`. Progress still 0% | `tickets/{id}/contributions/{cid}`: `status: "PROPOSED"`, `resourceId: <albin's resource>`, `offered.quantity: 40000`. Resource `reservedQuantity` still `0` (no inventory move yet). |
+| 8 | Niraj | Open ticket → **"Proposed pledges (1)"** → click **Approve** | Toast "Pledge approved." Need #1 fills to 100%, overall 40%. Albin's contribution flips to **COMMITTED** on his page. Now Albin appears under "Active tickets" | Contribution `status: "COMMITTED"`, `committedAt` set. Albin's resource: `reservedQuantity: 40000`. Ticket: `progressPct: 40`, `participantOrgIds: [niraj, albin]`, `contributorCount: 1` |
+| 9 | Dhrupad | Same flow — pledge 60 desks → Niraj approves | Need #2 fills, overall 100%. "Contributors (2)" strip appears. Dhrupad now under his "Active tickets" too | Same shape; Dhrupad's resource `reservedQuantity: 60`. Ticket `progressPct: 100`, both orgs in `participantOrgIds` |
+| 10 | Niraj | "Host controls" → **"Move to execution"** | Phase chip **"Executing"** | Ticket `phase: "EXECUTION"`. Both contributions flip from `COMMITTED` → `EXECUTED` in the same transaction |
+| 11 | Niraj | Pick any image, upload via the file input | Toast "Photo proof uploaded." | `tickets/{id}/photoProofs/{pid}` with `uploaderOrgId: <niraj>`, `storagePath`. `tickets/{id}.lastUpdatedAt` bumped. |
+| 12 | Niraj | **"Mark execution complete"** | Phase chip **"Awaiting sign-off"** | Ticket `phase: "PENDING_SIGNOFF"`. Contributions stay `EXECUTED`. |
+| 13 | Albin | "Sign off on this delivery" → **"Confirm delivery"** | Toast "Delivery confirmed." Phase stays "Awaiting sign-off" (still need Dhrupad). | `tickets/{id}/signoffs/{ticketId__albinOrgId}` with `decision: "APPROVED"`. Albin's contribution: `status: "SIGNED_OFF"`, `signedOffAt` set. |
+| 14 | Dhrupad | Same | **All three screens flip to "Closed" within ~3s.** | Dhrupad's signoff written. `onSignoffRecorded` confirms full coverage → ticket `phase: "CLOSED"`, `closedAt` set. `onTicketClosed` then fires: Albin's resource `quantity: 60000` (was 100000), `reservedQuantity: 0`. Dhrupad's resource `quantity: 140`, `reservedQuantity: 0`. 3 docs in `badges/{ticketId__orgId}`. |
+
+If every row's Firestore column matches, the platform is end-to-end live.
+
+---
+
+## Verifying the four high-leverage subsystems
+
+### 1. Resource embedding pipeline
+
+After step 3 or 4, navigate to Firestore → `resources/{your resource id}` and watch:
+
+- `embeddingStatus`: starts at `"pending"`. Should flip to `"ok"` within **10–30s**. If it sits at `"pending"` for >2 min, check `firebase functions:log --only onResourceCreated` — likely a Vertex AI auth issue.
+- `embeddingVersion`: should be a non-empty string (e.g. `"text-embedding-004:v1"`).
+- `embedding`: 768-element float array. (Console may collapse it; click to expand.)
+- If `embeddingStatus === "failed"`, the resource will never match. The trigger logs the reason — fix and re-create the resource (or run the embed manually).
+
+**Fast sanity:** when embedding is done, `resources where embeddingStatus == "ok" and orgId == <yours>` should return your resource. The matching trigger filters on `embeddingStatus === "ok"` so anything stuck at `pending` is invisible.
+
+### 2. Matching pipeline (Recommended feed source)
+
+After step 5, navigate to Firestore → `matches`. Filter by `ticketId == <new ticket id>`. You should see:
+
+- **One match doc per eligible (org, ticket) pair.** Doc id is `{ticketId}__{orgId}`. For our 3-person setup with both Albin and Dhrupad eligible, you should see exactly **2** match docs.
+- Each doc has `score: 0–1` (Flow A only — undefined for rapid), `topResourceId`, `bestNeedIndex`, `contributionImpactPct`, `geoDistanceKm`, `reason`, `rapidBroadcast: false`, `dismissed: false`, `surfaced: false`.
+- If a contributor's resource has `embeddingStatus !== "ok"` at the moment the ticket lands, NO match doc gets written for that org. The matching trigger reads `resources where status == "AVAILABLE"` and only writes for survivors.
+- **For rapid (EMERGENCY) tickets**, `onRapidTicketCreated` fires instead and writes broadcast matches — `rapidBroadcast: true`, no `score`.
+
+### 3. Active Tickets panel logic
+
+Driven by the query: `tickets where participantOrgIds array-contains <viewerOrgId> orderBy lastUpdatedAt desc limit 50`.
+
+- A ticket appears under your "Active tickets" the moment your `orgId` lands in `tickets/{id}.participantOrgIds`. For the host, that's at raise time. For a contributor, that's when their pledge is APPROVED (not PROPOSED).
+- **PROPOSED contributions do NOT add you to `participantOrgIds`** — only COMMITTED does. So Albin sees the ticket under "Recommended" before approval, then under "Active" after Niraj approves him.
+- Order is by `lastUpdatedAt` descending — every pledge approval, photo upload, signoff, or phase change bumps `lastUpdatedAt` and re-sorts the list.
+- Closed tickets stay in this list (closure does NOT remove orgs from `participantOrgIds`); they show with the gray "Closed" chip.
+
+### 4. Recommended Tickets panel logic
+
+Driven by TWO parallel queries against `matches/`:
+
+```
+matches where orgId == <viewerOrgId> AND rapidBroadcast == false ORDER BY score DESC LIMIT 25  (Flow A)
+matches where orgId == <viewerOrgId> AND rapidBroadcast == true  ORDER BY createdAt DESC LIMIT 25 (Flow B)
+```
+
+Then merged client-side; rapid floats to the top regardless of score.
+
+- **A ticket appears in "Recommended" only if a match doc exists for your org.** No match doc → no card. This is why a fresh org with no resources sees the empty state.
+- **The panel also fetches each ticket header** (`tickets/{id}`) once per match to filter out CLOSED tickets — match docs aren't garbage-collected when their ticket closes, so the client filters them.
+- **Tickets you participate in (host or COMMITTED contributor) still get match docs**, but they show under "Active" instead of "Recommended" because the `RecommendedTicketsList` doesn't currently filter them out — *minor known imperfection*. The dedupe is by ticket id; if it bothers you, extend the visible-ticket filter to also exclude tickets where you're in `participantOrgIds`.
+- **Empty state** ("No matches yet — list more resources or wait for new tickets to land") fires when both query results are empty. NOT a bug — it means matching never wrote a doc for your org.
+
+---
+
+## Failure signals — what's wrong if you see this
+
+| Signal | Most likely cause | First check |
+|---|---|---|
+| Resource list shows "Embedding…" badge >2 min | Embedding trigger failing | `firebase functions:log --only onResourceCreated` |
+| "No matches yet" despite having resources | Resource still embedding, OR ticket doesn't share a category | `resources/{yours}.embeddingStatus`; ticket `needs[].resourceCategory` |
+| Pledge succeeds but progress doesn't move | PROPOSED, not COMMITTED — host hasn't approved | Niraj clicks Approve in "Proposed pledges" |
+| "Move to execution" button gives "zero COMMITTED contributions" | All pledges still PROPOSED | Approve at least one |
+| Auto-close didn't fire after both signoffs | `onSignoffRecorded` cold start or expected/received mismatch | `firebase functions:log --only onSignoffRecorded` |
+| Resource `quantity` didn't decrease after close | `onTicketClosed` `commitInventory` errored | `firebase functions:log --only onTicketClosed` |
+| Contribution silently disappeared from "Your contributions" | Auto-rejected (phase advance) or 36h TTL | Read `rejectReason` on the contribution doc |
+
+**End of cheat sheet.** If you can run all 14 rows top-to-bottom against the live deploy and see every Firestore column match, you're demo-ready.
+
+---
+
 **End of dry run.** When all of Part B and Part C land their expected results, we're ready for the judges.
