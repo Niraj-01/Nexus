@@ -5,7 +5,7 @@
  *   npx firebase emulators:start --only firestore
  * Then: npx vitest run tests/rules
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
 import {
   assertFails,
   assertSucceeds,
@@ -458,5 +458,255 @@ describe("photoProofs — closed-ticket public read", () => {
 
   it("anon CANNOT read proofs on OPEN ticket", async () => {
     await assertFails(getDoc(doc(asAnon(env), "tickets/open-1/photoProofs/p1")));
+  });
+});
+
+// ─── New-slices tests (added with §3.2/§3.3/§3.4 public surfaces) ─────────
+
+describe("organizations — public ACTIVE read", () => {
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, `organizations/${ORG_A}`), {
+        name: "Active Org",
+        type: "NGO",
+        status: "ACTIVE",
+        govtDocs: [],
+        geo: { lat: 0, lng: 0, adminRegion: "IN", operatingAreas: [] },
+        contact: { email: "a@a.com" },
+        createdAt: 1,
+      });
+      await setDoc(doc(db, `organizations/${ORG_B}`), {
+        name: "Pending Org",
+        type: "ORG",
+        status: "PENDING_REVIEW",
+        govtDocs: [],
+        geo: { lat: 0, lng: 0, adminRegion: "IN", operatingAreas: [] },
+        contact: { email: "b@b.com" },
+        createdAt: 1,
+      });
+    });
+  });
+
+  it("anon CAN read an ACTIVE org (public profile page)", async () => {
+    await assertSucceeds(getDoc(doc(asAnon(env), `organizations/${ORG_A}`)));
+  });
+
+  it("anon CANNOT read a PENDING_REVIEW org", async () => {
+    await assertFails(getDoc(doc(asAnon(env), `organizations/${ORG_B}`)));
+  });
+});
+
+describe("resources — public read", () => {
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "resources/r-public"), {
+        orgId: ORG_A,
+        category: "FOOD_KIT",
+        title: "kits",
+        quantity: 100,
+        unit: "kits",
+        valuationINR: 50000,
+        terms: { availableFrom: 1, availableUntil: 999, conditions: "" },
+        geo: {
+          lat: 0,
+          lng: 0,
+          adminRegion: "IN",
+          operatingAreas: [],
+          serviceRadiusKm: 10,
+        },
+        emergencyContract: {
+          enabled: false,
+          emergencyCategories: [],
+          maxQuantityPerTicket: 0,
+          autoNotify: false,
+        },
+        status: "AVAILABLE",
+      });
+    });
+  });
+
+  it("anon CAN read resources (public listing for matching)", async () => {
+    await assertSucceeds(getDoc(doc(asAnon(env), "resources/r-public")));
+  });
+
+  it("owner CAN delete their own resource", async () => {
+    const { deleteDoc } = await import("firebase/firestore");
+    await assertSucceeds(deleteDoc(doc(asOrgA(env), "resources/r-public")));
+  });
+
+  it("non-owner CANNOT delete a resource", async () => {
+    const { deleteDoc } = await import("firebase/firestore");
+    await assertFails(deleteDoc(doc(asOrgB(env), "resources/r-public")));
+  });
+});
+
+describe("matches — server-only writes, member dismiss-flip only", () => {
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "matches/m-a"), {
+        orgId: ORG_A,
+        ticketId: "t-1",
+        topResourceId: "r-1",
+        score: 0.8,
+        rapidBroadcast: false,
+        createdAt: 1,
+        dismissed: false,
+      });
+    });
+  });
+
+  it("viewer org CAN read its own match", async () => {
+    await assertSucceeds(getDoc(doc(asOrgA(env), "matches/m-a")));
+  });
+
+  it("non-viewer org CANNOT read another org's match", async () => {
+    await assertFails(getDoc(doc(asOrgB(env), "matches/m-a")));
+  });
+
+  it("viewer org CAN flip only `dismissed` on their match", async () => {
+    await assertSucceeds(
+      updateDoc(doc(asOrgA(env), "matches/m-a"), { dismissed: true }),
+    );
+  });
+
+  it("viewer org CANNOT touch `score` or other fields", async () => {
+    await assertFails(updateDoc(doc(asOrgA(env), "matches/m-a"), { score: 1.0 }));
+    await assertFails(
+      updateDoc(doc(asOrgA(env), "matches/m-a"), { dismissed: true, score: 1.0 }),
+    );
+  });
+
+  it("nobody can client-create a match doc", async () => {
+    await assertFails(
+      setDoc(doc(asOrgA(env), "matches/m-new"), {
+        orgId: ORG_A,
+        ticketId: "t-2",
+        topResourceId: "r-2",
+        score: 0.5,
+        rapidBroadcast: false,
+        createdAt: 1,
+      }),
+    );
+  });
+});
+
+describe("agreements — party-only read, server-only write", () => {
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "agreements/a-1"), {
+        ticketId: "t-1",
+        hostOrgId: ORG_A,
+        contributorOrgId: ORG_B,
+        status: "DRAFT",
+        createdAt: 1,
+      });
+    });
+  });
+
+  it("host party CAN read agreement", async () => {
+    await assertSucceeds(getDoc(doc(asOrgA(env), "agreements/a-1")));
+  });
+
+  it("contributor party CAN read agreement", async () => {
+    await assertSucceeds(getDoc(doc(asOrgB(env), "agreements/a-1")));
+  });
+
+  it("non-party org CANNOT read agreement", async () => {
+    const ORG_C_ctx = env
+      .authenticatedContext("user-c", { role: "ORG_ADMIN", orgId: "org-c" })
+      .firestore();
+    await assertFails(getDoc(doc(ORG_C_ctx, "agreements/a-1")));
+  });
+
+  it("party org CANNOT client-write an agreement", async () => {
+    await assertFails(
+      updateDoc(doc(asOrgA(env), "agreements/a-1"), { status: "SIGNED" }),
+    );
+  });
+});
+
+describe("signoffs — contributor create only", () => {
+  beforeEach(async () => {
+    await seedTickets();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tickets/open-1/contributions/c-b"), {
+        contributorOrgId: ORG_B,
+        needIndex: 0,
+        offered: {
+          kind: "MATERIAL",
+          quantity: 5,
+          unit: "kits",
+          valuationINR: 500,
+          pctOfNeed: 50,
+          notes: "",
+        },
+        status: "EXECUTED",
+        commitPath: "PLEDGE_FIRST",
+        requestId: "req-00000010",
+        createdAt: 1,
+      });
+    });
+  });
+
+  it("contributor CAN create their own signoff", async () => {
+    await assertSucceeds(
+      setDoc(doc(asOrgB(env), "tickets/open-1/signoffs/s-1"), {
+        contributorOrgId: ORG_B,
+        decision: "APPROVED",
+        note: "",
+        createdAt: 1,
+      }),
+    );
+  });
+
+  it("non-contributor CANNOT forge a signoff under another org", async () => {
+    await assertFails(
+      setDoc(doc(asOrgA(env), "tickets/open-1/signoffs/s-2"), {
+        contributorOrgId: ORG_B,
+        decision: "APPROVED",
+        note: "",
+        createdAt: 1,
+      }),
+    );
+  });
+
+  it("signed-in users CAN read signoffs on a ticket", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tickets/open-1/signoffs/s-3"), {
+        contributorOrgId: ORG_B,
+        decision: "APPROVED",
+        note: "",
+        createdAt: 1,
+      });
+    });
+    await assertSucceeds(
+      getDoc(doc(asOrgA(env), "tickets/open-1/signoffs/s-3")),
+    );
+  });
+
+  it("anon CANNOT read signoffs (auth-gated)", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "tickets/closed-1/signoffs/s-4"), {
+        contributorOrgId: ORG_B,
+        decision: "APPROVED",
+        note: "",
+        createdAt: 1,
+      });
+    });
+    await assertFails(
+      getDoc(doc(asAnon(env), "tickets/closed-1/signoffs/s-4")),
+    );
+  });
+});
+
+describe("default deny — unknown collections", () => {
+  it("nobody (even admin via client SDK) can read an unknown top-level collection", async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "secrets/s1"), { v: 1 });
+    });
+    await assertFails(getDoc(doc(asOrgA(env), "secrets/s1")));
+    await assertFails(getDoc(doc(asAdmin(env), "secrets/s1")));
+    await assertFails(getDoc(doc(asAnon(env), "secrets/s1")));
   });
 });

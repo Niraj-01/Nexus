@@ -14,10 +14,11 @@ import { withIdempotency } from "../lib/idempotency";
  *   - DISPUTED → flips contribution EXECUTED → DISPUTED.
  *
  * `onSignoffRecorded` runs after this and decides whether the ticket can
- * close (all contributors APPROVED, none DISPUTED). App Check enforced;
- * idempotent via `withIdempotency`.
+ * close (all contributors APPROVED, none DISPUTED). App Check disabled for
+ * demo (no site key wired client-side); add back post-demo. Idempotent via
+ * `withIdempotency`.
  */
-export const recordSignoff = onCall({ enforceAppCheck: true, cors: true, invoker: "public" }, async (request) => {
+export const recordSignoff = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Sign in required.");
   }

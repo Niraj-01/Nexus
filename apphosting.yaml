@@ -25,10 +25,10 @@ env:
     value: "608960225873"
     availability: [BUILD, RUNTIME]
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
-    value: 1:608960225873:web:6e92ed66bb7d50b64c4e70
+    value: 1:608960225873:web:ffc485fca61e250e4c4e70
     availability: [BUILD, RUNTIME]
   - variable: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
-    value: G-HHHDX7QJLP
+    value: G-9YXQ17R7GN
     availability: [BUILD, RUNTIME]
   - variable: NEXT_PUBLIC_USE_EMULATORS
     value: "0"

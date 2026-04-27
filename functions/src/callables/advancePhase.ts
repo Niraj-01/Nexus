@@ -20,9 +20,10 @@ import { withIdempotency } from "../lib/idempotency";
  *     - Contribution statuses unchanged at this step (they remain EXECUTED
  *       until each contributor signs off).
  *
- * App Check enforced. Idempotent via `withIdempotency`.
+ * App Check disabled for demo (no site key wired client-side); add back
+ * post-demo. Idempotent via `withIdempotency`.
  */
-export const advancePhase = onCall({ enforceAppCheck: true, cors: true, invoker: "public" }, async (request) => {
+export const advancePhase = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Sign in required.");
   }

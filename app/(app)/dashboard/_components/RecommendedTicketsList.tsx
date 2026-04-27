@@ -8,138 +8,67 @@ import {
   onSnapshot,
   orderBy,
   query,
-  where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/client";
+import type { TicketPhase, TicketUrgency } from "@/lib/schemas";
 
-interface MatchRow {
-  id: string;
-  ticketId: string;
-  topResourceId: string;
-  score?: number;
-  semanticScore?: number;
-  reason: string;
-  bestNeedIndex: number;
-  maxContributionPossible: number;
-  contributionFeasibility: boolean;
-  contributionImpactPct: number;
-  geoDistanceKm?: number;
-  rapidBroadcast: boolean;
-  createdAt: number;
-}
-
-interface TicketLite {
+interface TicketRow {
   id: string;
   title: string;
   category: string;
-  urgency: "NORMAL" | "EMERGENCY";
+  urgency: TicketUrgency;
   rapid: boolean;
+  phase: TicketPhase;
   host: { name: string; type: "NGO" | "ORG" };
   needs: Array<{ resourceCategory: string; quantity: number; unit: string }>;
   geo?: { adminRegion?: string };
+  participantOrgIds: string[];
+  createdAt: number;
 }
 
-/**
- * Three Firestore listeners fire in parallel from this component (one per
- * matches sub-query) — counts toward the dashboard contract budget in
- * `docs/List.md` §2.10. Each card resolves entirely from the match doc +
- * the lazily-loaded ticket header (which we batch-fetch in a single doc-list
- * query); no other reads.
- */
+// Until the matches pipeline is ranking by listed resources, this is a flat
+// real-time feed of every active (non-closed) ticket on the platform — minus
+// tickets the viewer is already participating in (host or contributor), which
+// would otherwise duplicate the Active Tickets panel. When the matches
+// collection has data, swap this listener back to `matches` filtered by
+// viewer orgId.
 export function RecommendedTicketsList({ orgId }: { orgId: string }) {
-  const [normal, setNormal] = useState<MatchRow[] | null>(null);
-  const [rapid, setRapid] = useState<MatchRow[] | null>(null);
-  const [tickets, setTickets] = useState<Record<string, TicketLite>>({});
+  const [rows, setRows] = useState<TicketRow[] | null>(null);
 
-  // Normal recommended — score-ordered top 10 (Flow A).
   useEffect(() => {
-    if (!orgId) return;
     const q = query(
-      collection(db, "matches"),
-      where("orgId", "==", orgId),
-      where("rapidBroadcast", "==", false),
-      orderBy("score", "desc"),
-      limit(10),
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap) => setNormal(snap.docs.map(toMatch)),
-      () => setNormal([]),
-    );
-    return unsub;
-  }, [orgId]);
-
-  // Rapid broadcast — newest-first; sorted client-side by spec §5.
-  useEffect(() => {
-    if (!orgId) return;
-    const q = query(
-      collection(db, "matches"),
-      where("orgId", "==", orgId),
-      where("rapidBroadcast", "==", true),
+      collection(db, "tickets"),
       orderBy("createdAt", "desc"),
-      limit(30),
+      limit(50),
     );
     const unsub = onSnapshot(
       q,
-      (snap) => setRapid(snap.docs.map(toMatch)),
-      () => setRapid([]),
+      (snap) => {
+        const out: TicketRow[] = snap.docs
+          .map((d) => {
+            const x = d.data();
+            return {
+              id: d.id,
+              title: String(x.title ?? "(untitled)"),
+              category: String(x.category ?? ""),
+              urgency: x.urgency,
+              rapid: Boolean(x.rapid),
+              phase: x.phase as TicketPhase,
+              host: { name: String(x.host?.name ?? "—"), type: x.host?.type ?? "ORG" },
+              needs: Array.isArray(x.needs) ? x.needs : [],
+              geo: x.geo,
+              participantOrgIds: Array.isArray(x.participantOrgIds) ? x.participantOrgIds : [],
+              createdAt: Number(x.createdAt ?? 0),
+            };
+          })
+          .filter((t) => t.phase !== "CLOSED")
+          .filter((t) => !t.participantOrgIds.includes(orgId));
+        setRows(out);
+      },
+      () => setRows([]),
     );
     return unsub;
   }, [orgId]);
-
-  // Hydrate ticket headers for every match we hold. One-shot per ticketId,
-  // cached in `tickets` state. Single round-trip via `documentId in […]`.
-  useEffect(() => {
-    const all = [...(normal ?? []), ...(rapid ?? [])];
-    const missing = Array.from(
-      new Set(all.map((m) => m.ticketId).filter((id) => !tickets[id])),
-    );
-    if (missing.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      const { getDocs, documentId } = await import("firebase/firestore");
-      // Firestore `in` filter is capped at 30 ids per query — chunk.
-      const chunks: string[][] = [];
-      for (let i = 0; i < missing.length; i += 30) chunks.push(missing.slice(i, i + 30));
-      const fetched: Record<string, TicketLite> = {};
-      for (const chunk of chunks) {
-        const q = query(collection(db, "tickets"), where(documentId(), "in", chunk));
-        const snap = await getDocs(q);
-        snap.forEach((d) => {
-          const x = d.data();
-          fetched[d.id] = {
-            id: d.id,
-            title: String(x.title ?? "(untitled)"),
-            category: String(x.category ?? ""),
-            urgency: x.urgency,
-            rapid: Boolean(x.rapid),
-            host: { name: String(x.host?.name ?? "—"), type: x.host?.type ?? "ORG" },
-            needs: Array.isArray(x.needs) ? x.needs : [],
-            geo: x.geo,
-          };
-        });
-      }
-      if (!cancelled) setTickets((prev) => ({ ...prev, ...fetched }));
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [normal, rapid, tickets]);
-
-  const rapidSorted = (rapid ?? [])
-    .slice()
-    .sort((a, b) => {
-      const ua = tickets[a.ticketId]?.urgency === "EMERGENCY" ? 1 : 0;
-      const ub = tickets[b.ticketId]?.urgency === "EMERGENCY" ? 1 : 0;
-      if (ua !== ub) return ub - ua; // urgency desc
-      const da = a.geoDistanceKm ?? Number.POSITIVE_INFINITY;
-      const dbb = b.geoDistanceKm ?? Number.POSITIVE_INFINITY;
-      if (da !== dbb) return da - dbb; // distance asc
-      return b.maxContributionPossible - a.maxContributionPossible;
-    });
-
-  const loading = normal === null || rapid === null;
-  const isEmpty = !loading && rapidSorted.length === 0 && (normal ?? []).length === 0;
 
   return (
     <section className="stack">
@@ -148,83 +77,44 @@ export function RecommendedTicketsList({ orgId }: { orgId: string }) {
           Recommended for you
         </h2>
         <p className="muted-text" style={{ fontSize: 13 }}>
-          Tickets matched to your resources, ranked by capability and proximity.
+          Live feed of active tickets across the network.
         </p>
       </header>
 
-      {loading ? (
-        <p className="muted-text">Loading recommendations…</p>
-      ) : isEmpty ? (
+      {rows === null ? (
+        <p className="muted-text">Loading tickets…</p>
+      ) : rows.length === 0 ? (
         <div className="card stack-sm" style={{ textAlign: "center", padding: 24 }}>
-          <strong>No matches yet</strong>
+          <strong>No active tickets yet</strong>
           <p className="muted-text" style={{ fontSize: 13 }}>
-            Match recommendations appear here once your resources are embedded
-            and a ticket in your category is raised nearby.
+            Tickets raised by any organization will appear here as soon as they&apos;re posted.
           </p>
-          <div className="row" style={{ justifyContent: "center" }}>
-            <Link href="/resources/new" className="btn btn-primary">List a resource</Link>
-          </div>
         </div>
       ) : (
-        <>
-          {rapidSorted.length > 0 && (
-            <div className="stack-sm">
-              <h3 style={{ fontSize: 14, fontWeight: 600, color: "var(--color-danger, #dc2626)" }}>
-                Emergency Response Needed
-              </h3>
-              <div className="stack-sm">
-                {rapidSorted.map((m) => (
-                  <RecommendedCard key={m.id} match={m} ticket={tickets[m.ticketId]} rapid />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {(normal ?? []).length > 0 && (
-            <div className="stack-sm">
-              <h3 style={{ fontSize: 14, fontWeight: 600 }}>Best matches</h3>
-              <div className="stack-sm">
-                {(normal ?? []).map((m) => (
-                  <RecommendedCard key={m.id} match={m} ticket={tickets[m.ticketId]} rapid={false} />
-                ))}
-              </div>
-            </div>
-          )}
-        </>
+        <div className="stack-sm">
+          {rows.map((t) => (
+            <TicketCard key={t.id} t={t} />
+          ))}
+        </div>
       )}
     </section>
   );
 }
 
-function RecommendedCard({
-  match,
-  ticket,
-  rapid,
-}: {
-  match: MatchRow;
-  ticket: TicketLite | undefined;
-  rapid: boolean;
-}) {
-  if (!ticket) {
-    return (
-      <article className="card stack-sm" style={{ opacity: 0.6 }}>
-        <span className="muted-text">Loading ticket…</span>
-      </article>
-    );
-  }
-  const need = ticket.needs[match.bestNeedIndex] ?? ticket.needs[0];
+function TicketCard({ t }: { t: TicketRow }) {
+  const need = t.needs[0];
   return (
     <article
       className="card stack-sm"
       style={{
-        borderColor: rapid ? "var(--color-danger, #dc2626)" : undefined,
-        borderWidth: rapid ? 2 : 1,
+        borderColor: t.rapid ? "var(--color-danger, #dc2626)" : undefined,
+        borderWidth: t.rapid ? 2 : 1,
       }}
     >
       <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
         <div className="stack-sm" style={{ minWidth: 0, flex: 1 }}>
           <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            {rapid && (
+            {t.rapid && (
               <span
                 style={{
                   fontSize: 11,
@@ -241,19 +131,19 @@ function RecommendedCard({
               </span>
             )}
             <span style={{ fontSize: 12, color: "var(--color-muted, #6b7280)" }}>
-              {ticket.host.name} · {ticket.host.type}
+              {t.host.name} · {t.host.type}
             </span>
           </div>
-          <h4 style={{ fontWeight: 600, fontSize: 16, margin: 0 }}>{ticket.title}</h4>
+          <h4 style={{ fontWeight: 600, fontSize: 16, margin: 0 }}>{t.title}</h4>
         </div>
-        <Link href={`/tickets/${match.ticketId}`} className="btn btn-primary" style={{ flexShrink: 0 }}>
-          {rapid ? "Respond" : "Pledge"}
+        <Link href={`/tickets/${t.id}`} className="btn btn-primary" style={{ flexShrink: 0 }}>
+          {t.rapid ? "Respond" : "View"}
         </Link>
       </div>
 
       <div className="row" style={{ gap: 16, fontSize: 13, flexWrap: "wrap" }}>
-        {match.geoDistanceKm !== undefined && (
-          <span className="muted-text">{Math.round(match.geoDistanceKm)} km away</span>
+        {t.geo?.adminRegion && (
+          <span className="muted-text">{t.geo.adminRegion}</span>
         )}
         {need && (
           <span className="muted-text">
@@ -261,50 +151,6 @@ function RecommendedCard({
           </span>
         )}
       </div>
-
-      {match.contributionFeasibility ? (
-        <div
-          style={{
-            background: "var(--color-surface-2, #f6f7f9)",
-            padding: "10px 12px",
-            borderRadius: 6,
-            fontSize: 13,
-          }}
-        >
-          <strong>Your contribution potential:</strong>{" "}
-          fill <strong>{Math.round(match.contributionImpactPct)}%</strong> of remaining
-          {need ? ` (${formatQty(match.maxContributionPossible)} ${need.unit})` : ""}.
-        </div>
-      ) : (
-        <span className="muted-text" style={{ fontSize: 12 }}>
-          Limited capacity match
-        </span>
-      )}
     </article>
   );
-}
-
-function formatQty(n: number): string {
-  if (!Number.isFinite(n)) return "—";
-  if (n < 10) return n.toFixed(1).replace(/\.0$/, "");
-  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
-}
-
-function toMatch(d: { id: string; data: () => Record<string, unknown> }): MatchRow {
-  const x = d.data();
-  return {
-    id: d.id,
-    ticketId: String(x.ticketId ?? ""),
-    topResourceId: String(x.topResourceId ?? ""),
-    score: typeof x.score === "number" ? x.score : undefined,
-    semanticScore: typeof x.semanticScore === "number" ? x.semanticScore : undefined,
-    reason: String(x.reason ?? ""),
-    bestNeedIndex: Number(x.bestNeedIndex ?? 0),
-    maxContributionPossible: Number(x.maxContributionPossible ?? 0),
-    contributionFeasibility: Boolean(x.contributionFeasibility),
-    contributionImpactPct: Number(x.contributionImpactPct ?? 0),
-    geoDistanceKm: typeof x.geoDistanceKm === "number" ? x.geoDistanceKm : undefined,
-    rapidBroadcast: Boolean(x.rapidBroadcast),
-    createdAt: Number(x.createdAt ?? 0),
-  };
 }

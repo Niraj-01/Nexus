@@ -3,7 +3,7 @@ import * as admin from "firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { GoogleGenAI } from "@google/genai";
 
-export const EMBED_MODEL = "text-embedding-004";
+export const EMBED_MODEL = "gemini-embedding-001";
 export const EMBEDDING_DIM = 768;
 
 export function buildResourceEmbeddingInput(data: admin.firestore.DocumentData): string {
@@ -30,6 +30,7 @@ async function embedOnce(ai: GoogleGenAI, text: string): Promise<number[]> {
   const resp = await ai.models.embedContent({
     model: EMBED_MODEL,
     contents: text,
+    config: { outputDimensionality: EMBEDDING_DIM },
   });
   const values = resp.embeddings?.[0]?.values;
   if (!values || values.length !== EMBEDDING_DIM) {

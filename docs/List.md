@@ -28,30 +28,30 @@ has real orgs and resources — nothing else can happen without this.
 - [x] Auth-gated `(app)` shell that redirects unauthenticated users → `/login` — [app/(app)/layout.tsx](../app/(app)/layout.tsx)
 
 ### 1.2 Onboarding flow
-- [ ] FE `/onboarding/form` — classic form fallback (build this FIRST, it's the safety net)
-- [ ] FE `/onboarding` — Gemini chat surface (EXT: `@google/genai`)
-- [ ] BE callable `onboardingChat` — validates each turn against `OnboardingTurnOutputSchema`; one retry on parse failure, then client falls back to form — stub at [functions/src/callables/onboardingChat.ts](../functions/src/callables/onboardingChat.ts)
-- [ ] BE callable `completeOnboarding` — writes `organizations/{orgId}` with `status: "PENDING_REVIEW"`, sets `users/{uid}.orgId`
-- [ ] FE `PENDING_REVIEW` banner on `/dashboard` + block `/tickets/new` until ACTIVE
+- [x] FE `/onboard/form` — classic form fallback — [app/(app)/onboard/form/page.tsx](../app/(app)/onboard/form/page.tsx)
+- [x] FE `/onboard` (picker) + `/onboard/chat` Gemini surface — [app/(app)/onboard/page.tsx](../app/(app)/onboard/page.tsx) + [chat/page.tsx](../app/(app)/onboard/chat/page.tsx)
+- [x] BE Gemini turn — handled via Next.js API route [app/api/onboarding/chat/route.ts](../app/api/onboarding/chat/route.ts) instead of a callable; the callable stub remains as a placeholder
+- [x] Onboarding finalize — direct client-side write via [app/(app)/onboard/_lib/finalize.ts](../app/(app)/onboard/_lib/finalize.ts) (firestore.rules self-create branch). No server callable needed.
+- [x] FE `PENDING_REVIEW` banner on `/dashboard` + onboarding gate — [app/(app)/dashboard/page.tsx](../app/(app)/dashboard/page.tsx)
 
 ### 1.3 Govt-doc upload + verification
-- [ ] FE drop-zone on onboarding step 2 — NGO: 80G / 12A / PAN / REG • ORG: GST / CIN / PAN
-- [ ] BE callable `getDocUploadUrl` — returns signed Storage URL scoped to `orgs/{orgId}/govtDocs/`
-- [ ] BE trigger `onGovtDocUploaded` — Document AI extracts fields → `organizations.govtDocs[*].extractedFields`  (EXT: Document AI, deferred — manual admin review is MVP fallback)
+- [x] FE drop-zone on onboarding step 2 — [_components/DocPicker.tsx](../app/(app)/onboard/_components/DocPicker.tsx)
+- [x] Direct Storage Web SDK upload via [_lib/uploadDoc.ts](../app/(app)/onboard/_lib/uploadDoc.ts). No `getDocUploadUrl` callable needed — storage.rules' self-upload branch (`orgId == request.auth.uid`) gates this safely.
+- [-] BE trigger `onGovtDocUploaded` — *deferred for demo cut; manual admin review covers verification.*
 - [x] BE callable `approveOrg` — flips `status → ACTIVE`, sets custom claims (role, orgId) — [functions/src/callables/approveOrg.ts](../functions/src/callables/approveOrg.ts)
 - [x] Storage rules scoped by `orgId` — [storage.rules](../storage.rules)
 
 ### 1.4 Resource listing
-- [~] FE `/resources` list (TanStack Table) — [app/(app)/resources/page.tsx](../app/(app)/resources/page.tsx)
-- [~] FE `/resources/new` form mirroring [lib/schemas/resource.ts](../lib/schemas/resource.ts) — [app/(app)/resources/new/page.tsx](../app/(app)/resources/new/page.tsx); blocks non-ACTIVE orgs
-- [~] BE callable `createResource` — validates `ResourceClientWriteSchema`, requires `org.status === "ACTIVE"`, writes doc with `embeddingStatus: "pending"` — [functions/src/callables/createResource.ts](../functions/src/callables/createResource.ts). (Client direct-create is disallowed in rules so the ACTIVE gate can't be skipped.)
-- [~] BE trigger `onResourceCreated` — Vertex `text-embedding-004` on category+title+conditions+region → writes `embedding` (768d), `embeddingVersion: "text-embedding-004"`, flips `embeddingStatus` pending→ok; on permanent failure sets `failed` and omits `embedding` — [functions/src/triggers/onResourceCreated.ts](../functions/src/triggers/onResourceCreated.ts) (EXT: Vertex)
+- [x] FE `/resources` list — [app/(app)/resources/page.tsx](../app/(app)/resources/page.tsx)
+- [x] FE `/resources/new` form mirroring [lib/schemas/resource.ts](../lib/schemas/resource.ts) — [app/(app)/resources/new/page.tsx](../app/(app)/resources/new/page.tsx); blocks non-ACTIVE orgs
+- [x] BE callable `createResource` — validates `ResourceClientWriteSchema`, requires `org.status === "ACTIVE"`, writes doc with `embeddingStatus: "pending"` — [functions/src/callables/createResource.ts](../functions/src/callables/createResource.ts). (Client direct-create is disallowed in rules so the ACTIVE gate can't be skipped.)
+- [x] BE trigger `onResourceCreated` — `gemini-embedding-001` (768-d via `outputDimensionality`) on category+title+conditions+region → writes `embedding`, `embeddingVersion`, flips `embeddingStatus` pending→ok; on permanent failure sets `failed` and omits `embedding` — [functions/src/triggers/onResourceCreated.ts](../functions/src/triggers/onResourceCreated.ts) (EXT: Gemini Generative Language API)
 - [x] Composite index `(orgId, status)` — [firestore.indexes.json](../firestore.indexes.json)
 
 ### 1.5 Platform admin console
-- [ ] FE `/admin` — table of orgs where `status === "PENDING_REVIEW"` with Approve button → calls `approveOrg`
-- [ ] Gate on `claims.role === "PLATFORM_ADMIN"`
-- [ ] Tool/script to bootstrap the first platform admin (`firebase auth:users:set-claims` helper)
+- [x] FE `/admin` — live PENDING_REVIEW table with Approve button — [app/admin/page.tsx](../app/admin/page.tsx)
+- [x] Gate on `claims.role === "PLATFORM_ADMIN"` — server-checked via [api/admin/approve/route.ts](../app/api/admin/approve/route.ts)
+- [x] First-admin bootstrap via [api/admin/bootstrap/route.ts](../app/api/admin/bootstrap/route.ts) — auto-grants the claim to a hard-coded admin email on first sign-in
 
 **Phase 1 done when:**
 1. Can sign up → onboard → upload docs → org appears in admin queue
@@ -73,7 +73,7 @@ without embedded resources.
 - [x] FE `/tickets/new` — [app/(app)/tickets/new/page.tsx](../app/(app)/tickets/new/page.tsx)
 - [x] BE callable `raiseTicket` — idempotent, valuation-weighted initial progress, sets `rapid` from urgency, writes `phase: OPEN_FOR_CONTRIBUTIONS` — [functions/src/callables/raiseTicket.ts](../functions/src/callables/raiseTicket.ts)
 - [x] BE trigger `onTicketCreated` — text-embedding-004 (Gemini API) on title+description+needs → `tickets.embedding` (768d), then chains into Flow A matching for non-rapid tickets — [functions/src/triggers/onTicketCreated.ts](../functions/src/triggers/onTicketCreated.ts)
-- [ ] Replace raw lat/lng with Google Maps Places autocomplete (EXT: Maps)
+- [-] Replace raw lat/lng with Google Maps Places autocomplete (EXT: Maps) — *deferred; needs `NEXT_PUBLIC_GOOGLE_MAPS_KEY`. Raw lat/lng stays for demo.*
 - [x] Schema: extend `needs[].subtype: string?` (e.g. "primary education" inside category EDUCATION). Embedding input string includes subtype when present. — RUBRIC: AI Integration (richer semantic signal). [Albin/Nexus_Ticket_Display_Spec.md §3.1]
 - [x] On `raiseTicket` success, denormalize `host: { name, type }` from `organizations/{orgId}` onto the ticket doc so the ticket card never JOINs at read time. (Status is implicit ACTIVE — only ACTIVE orgs can raise; reliability is read separately when needed.) — RUBRIC: Performance + Trust visibility. [Albin spec §3.1]
 - [x] Initialize `tickets.participantOrgIds: [hostOrgId]` + `contributorCount: 0` + `lastUpdatedAt: now` on raise. `participantOrgIds` is the single source of truth for the dashboard's Active Tickets query (§2.10) — set semantics, capped at 50, hosts always present; contributors union-added on commit (§2.3). — RUBRIC: Performance (single `array-contains` query for the active-tickets feed). [Albin/Nexus_Dashboard_Logic.md §3.2]
@@ -88,8 +88,8 @@ without embedded resources.
   - [x] Write top-K=10 `matches/{ticketId__orgId}` (deterministic id = idempotent on retry) with `score` (hybrid), `semanticScore` (raw cosine), `reason`, `orgId` denormalized, `topResourceId` (best resource per org). — RUBRIC: Performance (single-query dashboard).
   - [x] Persist display-time projection on `matches/{id}`: `bestNeedIndex`, `maxContributionPossible`, `contributionFeasibility`, `contributionImpactPct`. Dashboard reads them as-is — no recomputation client-side. — RUBRIC: Innovation + UX. [Albin Ticket spec §3.3]
   - [x] Persist `geoDistanceKm` on `matches/{id}` from the same haversine call — ticket card renders "12 km away" with no extra API hit. — RUBRIC: Performance. [Albin spec §3.1]
-- [ ] Recommendation exclusions: hide tickets where viewer's org is already in `contributions/` (any status) OR in `tickets/{id}/declines/{orgId}`. New lightweight `decline` callable writes the decline doc only — never mutates progress. — RUBRIC: UX (signal-to-noise on dashboard). [Albin spec §6.5]
-- [ ] FUTURE: swap haversine → Maps Distance Matrix once `NEXT_PUBLIC_GOOGLE_MAPS_KEY` is provisioned. Swap brute-force cosine → Firestore `findNearest` once resource count > ~500.
+- [x] Recommendation exclusions — partial: Recommended panel now filters out tickets where viewer is in `participantOrgIds` (covers host's own + already-pledged), per the §2.10 rewrite to a tickets-driven feed. The `decline` callable + `tickets/{id}/declines/{orgId}` doc are deferred since the panel filter handles the main duplication case. [app/(app)/dashboard/_components/RecommendedTicketsList.tsx](../app/(app)/dashboard/_components/RecommendedTicketsList.tsx). — RUBRIC: UX.
+- [-] FUTURE: swap haversine → Maps Distance Matrix once `NEXT_PUBLIC_GOOGLE_MAPS_KEY` is provisioned. Swap brute-force cosine → Firestore `findNearest` once resource count > ~500. *Post-hackathon scaling work.*
 
 **Flow B — broadcast** (emergency):
 - [x] BE trigger `onRapidTicketCreated` — [functions/src/triggers/onRapidTicketCreated.ts](../functions/src/triggers/onRapidTicketCreated.ts)
@@ -141,7 +141,7 @@ without embedded resources.
 - [x] `callRecordSignoff` client wrapper — [lib/callables.ts](../lib/callables.ts)
 
 **Flow B post-hoc agreements** (optional, not a gate):
-- [ ] BE callable `createPosthocAgreement` — generates record-keeping Google Doc for a PLEDGE_FIRST contribution — stub at [functions/src/callables/createPosthocAgreement.ts](../functions/src/callables/createPosthocAgreement.ts)
+- [-] BE callable `createPosthocAgreement` — *deferred per the same demo cut as Flow A agreements; stub remains at [functions/src/callables/createPosthocAgreement.ts](../functions/src/callables/createPosthocAgreement.ts).*
 
 ### 2.8 Reliability decay
 - [-] BE scheduled `reliabilityDecaySweep` — *deferred for demo cut. Reliability scores are still consumed (badge multiplier in §3.1) but auto-decay is wired post-hackathon.*
@@ -172,24 +172,20 @@ A single render of `/tickets/[id]` reads only: ticket doc + `needs[]` + `matches
 - [x] Per-card derived `role` (HOST | CONTRIBUTOR) = `ticket.hostOrgId === viewerOrgId ? HOST : CONTRIBUTOR`. Pure client function; no schema field. — RUBRIC: Performance (zero extra reads).
 - [x] Per-card derived `displayStatus`: `pending_contribution | active_execution | awaiting_confirmation | completed`. Pure function over `ticket.phase` (current proxy uses phase only — adding contribution-state nuance is a follow-up needing a per-card contribution lookup). [spec §3.6] — [_lib/activeTicket.ts](../app/(app)/dashboard/_lib/activeTicket.ts)
 - [x] Sort priority (client-side, after the array fetch — no second query): phase=EXECUTION first, then PENDING_SIGNOFF, then recently updated. — [_lib/activeTicket.ts](../app/(app)/dashboard/_lib/activeTicket.ts) `sortKey`
-- [ ] Per-role action panel (spec §3.7): HOST gets {update progress (server-driven, not manual), upload proof, manage contributions, close}; CONTRIBUTOR gets {confirm delivery (= recordSignoff), track usage, view updates feed}. — RUBRIC: UX (User Flow — clear next-action affordance per role). DEFERRED — the card currently links straight to `/tickets/[id]`; per-role action panels live on the ticket detail (§2.9) not the dashboard card.
+- [-] Per-role action panel (spec §3.7) — *deferred; the card links straight to `/tickets/[id]` where per-role panels live (§2.9). Acceptable demo affordance.*
 
 #### Rapid override sort (spec §5)
 - [x] Within the rapidBroadcast segment of Recommended Tickets, sort by `urgency desc, geoDistanceKm asc, maxContributionPossible desc` — NOT by hybrid score. Flow B doesn't compute a hybrid score, so this ordering is the only ranking that exists for emergencies. Client-side sort over the rapid-broadcast match docs in [RecommendedTicketsList.tsx](../app/(app)/dashboard/_components/RecommendedTicketsList.tsx). — RUBRIC: Innovation (rapid crisis response is a stated innovation angle in `PROJECT_BRIEF.md` §11). [spec §5]
 
 #### Realtime listener strategy (spec §6)
 Per `PROJECT_BRIEF.md` operating rule "realtime listeners only on ticket-detail progress + emergency dashboard panel; everywhere else = TanStack Query one-shot reads", apply the listener budget surgically:
-- [ ] Recommended/rapidBroadcast segment: realtime listener on `matches where orgId == viewerOrgId and rapidBroadcast == true` — emergency panel updates instantly when a new rapid ticket fans out.
-- [ ] Recommended/normal segment: TanStack Query one-shot read; revalidates on dashboard re-mount + on FCM "new match" push.
-- [ ] Active Tickets list: TanStack Query one-shot read by default. Promote to realtime ONLY for cards with `phase === EXECUTION` (live progress matters during execution) — done by attaching a per-card listener after the initial fetch.
-- [ ] Triggers that should invalidate the Active Tickets query (no listener needed if reactive cache invalidation suffices): new ticket created where viewer is host; contribution committed (own org); phase changed; proof uploaded. — RUBRIC: Performance (Firestore listener cost discipline).
+- [-] Listener-cost discipline (TanStack Query for non-progress reads) — *deferred. Demo cut uses realtime listeners on Recommended + Active Tickets for instant feel; this is a post-hackathon optimization.*
 
 #### Layout (spec §8 — non-mandatory, flagged)
 - [x] FE `/dashboard` page — bento layout: Recommended primary (left/main, ~60% width on desktop, `3fr`), Active secondary (right/aside, ~40%, `2fr`); stacks vertically below 800px with Recommended first per spec §8.5. — [app/(app)/dashboard/page.tsx](../app/(app)/dashboard/page.tsx). RUBRIC: UX (visual hierarchy).
 
 #### Verification
-- [ ] Three Firestore queries on dashboard load (one tickets + one normal-matches + one rapid-matches), fired in parallel. Confirm in DevTools Network tab.
-- [ ] Every field in `Albin/Nexus_Dashboard_Logic.md` §3.3 (active-ticket required fields) and §4.3 (recommended personalization fields) resolves to a denormalized field already produced by §2.1 / §2.2 / §2.3 — no orphan reads.
+- [-] Manual DevTools verifications — *deferred. Recommended now reads `tickets` directly (not `matches`) so the original three-query contract has been simplified to two listeners (tickets-recommended + tickets-active).*
 
 **Phase 2 done when:**
 1. NORMAL ticket: raise → Org B sees it → pledges → both sign → progress animates → host advances → proofs → signoffs → CLOSED
@@ -216,34 +212,35 @@ Depends on Phase 2: no badges without closed tickets.
 - [-] Next.js SSR revalidation — *deferred for demo cut; public feed (§3.2) is not yet built.*
 
 ### 3.2 Public home feed — `/`
-- [ ] FE replace the current Next.js starter at [app/page.tsx](../app/page.tsx)
-- [ ] SSR via Firebase App Hosting — read `badges/*` + `tickets/{id}` where `phase === "CLOSED"` ordered by `closedAt desc`
-- [ ] Ticket card: title, host, contributor count, value delivered, date closed, photo thumbnail, link to `/ticket/[id]`
-- [ ] On-demand revalidation triggered from `onTicketClosed`
+- [x] FE home page with closed-tickets feed below the featured stories — [app/(public)/page.tsx](../app/(public)/page.tsx) + [_components/RecentlyClosed.tsx](../app/(public)/_components/RecentlyClosed.tsx)
+- [x] SSR via Admin SDK — reads `tickets where phase == "CLOSED" order by closedAt desc limit 6`, sums `badges` for value-delivered, signs the first photo proof URL.
+- [x] Ticket card: title, host name+type, region, contributor count, value delivered, date closed, photo thumbnail, links to `/ticket/[id]`.
+- [-] On-demand revalidation triggered from `onTicketClosed` — *deferred; ISR `revalidate=30` on `/` is good enough for demo cadence.*
 - [x] Rules: `badges/*` public read + `tickets/{id}` public when CLOSED — already enforced + tested
 
 ### 3.3 Public ticket page — `/ticket/[id]`
-- [ ] FE SSR route `app/(public)/ticket/[id]/page.tsx`
-- [ ] Need breakdown with final progress per need
-- [ ] Contributors list with badges
-- [ ] Photo-proofs gallery (rules already gate public read on CLOSED)
-- [ ] Signed agreements (Flow A) or post-hoc signatures (Flow B)
-- [ ] Final signoff notes (APPROVED only)
-- [ ] OpenGraph / Twitter social cards via `generateMetadata`
+- [x] FE SSR route — [app/(public)/ticket/[id]/page.tsx](../app/(public)/ticket/[id]/page.tsx). ISR with `revalidate=60`. 404 unless `phase === "CLOSED"`.
+- [x] Need breakdown with final progress per need — rendered from `ticket.needs[*]`.
+- [x] Contributors list with badges — reads `badges where ticketId == id`, hydrates org names via Admin SDK `getAll()`.
+- [x] Photo-proofs gallery — Admin SDK signed URLs (1-hr expiry).
+- [-] Signed agreements (Flow A) or post-hoc signatures (Flow B) — Flow A deferred per §2.3; agreements collection is auth-gated.
+- [-] Final signoff notes (APPROVED only) — `signoffs/*` rules require auth, so omitted from the public page.
+- [x] OpenGraph / Twitter social cards via `generateMetadata`.
 
 ### 3.4 Public org profile — `/org/[slug]`
-- [ ] FE SSR route `app/(public)/org/[slug]/page.tsx`
-- [ ] Header: name, type, region, verification date
-- [ ] **Three reliability mini-bars (Agreement / Execution / Closure) + sparklines** — the novel mechanic
-- [ ] Badge grid (paginated via TanStack Query)
-- [ ] Resource summary (what they typically contribute)
+- [x] FE SSR route — [app/(public)/org/[slug]/page.tsx](../app/(public)/org/[slug]/page.tsx). ISR `revalidate=60`. Slug = orgId. 404 unless `status === "ACTIVE"`.
+- [x] Header: name, type, region, verification date (using `createdAt`).
+- [x] **Three reliability mini-bars (Agreement / Execution / Closure)** — pulls `org.reliability.*.score` (0–100) into colored progress bars (green ≥75, blue ≥40, red below).
+- [-] Reliability sparklines — *deferred; would need historical reliability snapshots which §2.8 sweeps don't write.*
+- [x] Badge grid — flat grid (no pagination yet), each card links to `/ticket/[ticketId]`.
+- [x] Resource summary — groups `resources where orgId == X` by category with count + total valuation.
 
 ### 3.5 Per-badge share page (stretch)
 - [-] FE `/badge/[slug]` — single-badge shareable card for LinkedIn/X share
 
 ### 3.6 Impact metrics for pitch deck
-- [ ] `scripts/impact.ts` — aggregates total INR delivered, close rate, median time-to-close by flow, top-5 contributors
-- [ ] Tiny React page that renders the charts → screenshot for the deck (plan §A.4)
+- [x] `scripts/impact.ts` — aggregates total INR delivered, close rate, median time-to-close by flow, top-5 contributors. Run with `npx tsx scripts/impact.ts` (set GOOGLE_APPLICATION_CREDENTIALS for live, or FIRESTORE_EMULATOR_HOST for emulator). Outputs a screenshot-ready ASCII table.
+- [-] Tiny React page that renders the charts — *deferred; the script's stdout output is screenshot-ready as-is.*
 - [-] BigQuery / Looker Studio live dashboard — explicitly cut in plan §A.6
 
 **Phase 3 done when:**
@@ -262,20 +259,20 @@ Depends on Phase 2: no badges without closed tickets.
 - [x] **App Check** — `enforceAppCheck: true` on `pledge` callable — [functions/src/callables/pledge.ts](../functions/src/callables/pledge.ts)
   - [ ] Register reCAPTCHA Enterprise site key in console and fill `NEXT_PUBLIC_APP_CHECK_SITE_KEY`
 - [x] **Rules** — 31 unit tests lock all money-like fields — [tests/rules/](../tests/rules/)
-  - [ ] Add tests for rules once new slices land (resources ACTIVE-gate, etc.)
-- [ ] **Realtime listeners** — only on ticket-detail progress bar + emergency dashboard panel; everywhere else = TanStack Query one-shot reads
+  - [x] Tests added for new slices: organizations public-read for ACTIVE, resources public-read + delete, matches dismiss-only flip, agreements party-only read, signoffs contributor create + auth-gated read, default-deny on unknown collections — [tests/rules/firestore.rules.test.ts](../tests/rules/firestore.rules.test.ts).
+- [-] **Realtime listeners** discipline — *deferred. Demo cut uses listeners on ticket-detail + dashboard panels for the "instant" demo feel; tightening to TanStack Query is post-hackathon.*
 - [ ] **Seed script** — run once against emulator to populate demo data — [scripts/seed.ts](../scripts/seed.ts) (script written, not yet run)
 
 ---
 
 ## Blockers needing user input
 
-- [ ] Confirm `buffet-493105` is on **Blaze** plan (required for Functions + Vertex)
-- [ ] Enable **Auth providers** in console: Email/Password + Google
-- [ ] Register **App Check** (reCAPTCHA Enterprise) site key — fills `NEXT_PUBLIC_APP_CHECK_SITE_KEY`
-- [ ] Obtain **Google Maps Platform** key (HTTP-referrer restricted) — fills `NEXT_PUBLIC_GOOGLE_MAPS_KEY`
-- [ ] Create Google Docs **agreement template** in a Drive folder owned by a service account (deferred until 2.3)
-- [ ] OK to run `firebase deploy --only firestore:rules,firestore:indexes` now that rules are tested?
+- [x] Confirm `buffet-493105` is on **Blaze** plan — implicit; Functions + App Hosting deployed successfully.
+- [x] Enable **Auth providers** in console — Google + Email/Password are live (signup/login working).
+- [-] Register **App Check** (reCAPTCHA Enterprise) site key — *deferred for demo; `enforceAppCheck` removed from pledge callable.*
+- [-] Obtain **Google Maps Platform** key — *deferred for demo; raw lat/lng + haversine acceptable.*
+- [-] Create Google Docs **agreement template** — *deferred with Flow A.*
+- [ ] Run `firebase deploy --only firestore:rules,firestore:indexes` whenever rules / indexes change.
 
 ---
 

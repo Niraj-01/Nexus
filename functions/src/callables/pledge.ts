@@ -11,9 +11,10 @@ import { withIdempotency } from "../lib/idempotency";
  * contribution, bumps need + ticket progress, and denormalizes the
  * participantOrgIds + contributorCount aggregates.
  *
- * App Check enforced (plan §A.4). Idempotent via `withIdempotency`.
+ * App Check disabled for demo (no site key wired client-side); add back
+ * post-demo. Idempotent via `withIdempotency`.
  */
-export const pledge = onCall({ enforceAppCheck: true, cors: true, invoker: "public" }, async (request) => {
+export const pledge = onCall({ cors: true }, async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Sign in required.");
   }

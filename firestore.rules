@@ -55,6 +55,13 @@ service cloud.firestore {
       // Member or admin read regardless of status.
       allow read: if isOrgMember(orgId) || isPlatformAdmin();
 
+      // Self-read branch: a signed-in user reading their OWN org BEFORE
+      // custom claims are set. Mirrors self-create/self-update — orgId == uid
+      // is the self-onboard scheme, but the orgId claim isn't issued until
+      // approveOrg runs. Without this, OnboardingChat's getDoc and finalize.ts's
+      // existing-doc check both deny on new users.
+      allow read: if isSignedIn() && orgId == request.auth.uid;
+
       // Create: member of the org; may set status='PENDING_REVIEW' as default,
       // but reliability/badges must be absent (server-written).
       allow create: if isOrgMember(orgId)
