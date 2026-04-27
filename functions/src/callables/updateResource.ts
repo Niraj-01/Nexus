@@ -3,6 +3,7 @@ import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import { ResourceClientUpdateSchema } from "../lib/schemas";
 import { embedResourceDoc, resolveGeminiKey } from "../lib/embedResource";
+import { backfillMatchesForResource } from "../lib/backfillResourceMatches";
 
 /**
  * Update an existing resource owned by the caller's org. Re-runs the embedding
@@ -72,6 +73,13 @@ export const updateResource = onCall(
     const status = await embedResourceDoc(ref, fresh.data()!, apiKey, {
       resourceId: ref.id,
     });
+
+    if (status === "ok" || status === "skipped") {
+      const after = await ref.get();
+      if (after.exists) {
+        await backfillMatchesForResource(ref.id, after.data()!);
+      }
+    }
 
     return { resourceId: ref.id, embeddingStatus: status };
   },

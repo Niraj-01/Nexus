@@ -140,36 +140,29 @@ export function RecommendedTicketsList({ orgId }: { orgId: string }) {
   }, [matches, headers]);
 
   return (
-    <section className="stack">
-      <header className="stack-sm">
-        <h2 style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700, letterSpacing: "-0.01em" }}>
-          Recommended for you
-        </h2>
-        <p className="muted-text" style={{ fontSize: 13 }}>
-          Tickets that match your listed resources, ranked by fit.
-        </p>
+    <section className="dash-col">
+      <header className="dash-col-head">
+        <h2 className="dash-col-title">Recommended for you</h2>
+        <p className="dash-col-sub">Live feed of active tickets across the network.</p>
       </header>
 
       {visible === null ? (
-        <p className="muted-text">Loading matches…</p>
+        <p className="muted-text" style={{ paddingLeft: 4 }}>Loading matches…</p>
       ) : visible.length === 0 ? (
-        <div className="card stack-sm" style={{ textAlign: "center", padding: 24 }}>
+        <div className="dash-empty">
           <strong>No matches yet</strong>
-          <p className="muted-text" style={{ fontSize: 13 }}>
-            List more resources or wait for new tickets to land — your dashboard updates live as matches arrive.
+          <p>
+            List more resources or wait for new tickets to land — your dashboard
+            updates live as matches arrive.
           </p>
-          <div className="row" style={{ justifyContent: "center" }}>
-            <Link href="/resources/new" className="btn btn-ghost">
-              List a resource
-            </Link>
-          </div>
+          <Link href="/resources/new" className="btn btn-ghost">
+            List a resource
+          </Link>
         </div>
       ) : (
-        <div className="stack-sm">
-          {visible.map(({ match, ticket }) => (
-            <TicketCard key={match.id} match={match} ticket={ticket} />
-          ))}
-        </div>
+        visible.map(({ match, ticket }) => (
+          <TicketCard key={match.id} match={match} ticket={ticket} />
+        ))
       )}
     </section>
   );
@@ -214,67 +207,33 @@ function parseTicketHeader(id: string, data: Record<string, unknown>): TicketHea
 
 function TicketCard({ match, ticket }: { match: MatchRow; ticket: TicketHeader }) {
   const need = ticket.needs[0];
+  const hostLabel = `${ticket.host.name === "—" ? "—" : ticket.host.name} · ${ticket.host.type}`;
   return (
-    <article
-      className="card stack-sm"
-      style={{
-        borderColor: ticket.rapid ? "var(--color-danger, #dc2626)" : undefined,
-        borderWidth: ticket.rapid ? 2 : 1,
-      }}
+    <Link
+      href={`/tickets/${ticket.id}`}
+      className={`dash-card${ticket.rapid ? " dash-card--rapid" : ""}`}
     >
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-        <div className="stack-sm" style={{ minWidth: 0, flex: 1 }}>
-          <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            {ticket.rapid && (
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
-                  padding: "2px 8px",
-                  borderRadius: 4,
-                  background: "var(--color-danger, #dc2626)",
-                  color: "white",
-                }}
-              >
-                Emergency
-              </span>
-            )}
-            <span style={{ fontSize: 12, color: "var(--color-muted, #6b7280)" }}>
-              {ticket.host.name} · {ticket.host.type}
-            </span>
-          </div>
-          <h4 style={{ fontWeight: 600, fontSize: 16, margin: 0 }}>{ticket.title}</h4>
+      <div className="dash-card-body">
+        <div className="dash-card-meta">
+          {ticket.rapid && <span className="dash-tag dash-tag--emergency">Emergency</span>}
+          <span>{hostLabel}</span>
         </div>
-        <Link href={`/tickets/${ticket.id}`} className="btn btn-primary" style={{ flexShrink: 0 }}>
-          {ticket.rapid ? "Respond" : "View"}
-        </Link>
+        <h4 className="dash-card-title">{ticket.title}</h4>
+        <div className="dash-card-foot">
+          {ticket.geo?.adminRegion && <span>{ticket.geo.adminRegion}</span>}
+          {need && (
+            <>
+              {ticket.geo?.adminRegion && <span className="dash-card-foot-divider" />}
+              <span>
+                Needs {need.quantity} {need.unit} ({need.resourceCategory})
+              </span>
+            </>
+          )}
+        </div>
       </div>
-
-      <div className="row" style={{ gap: 16, fontSize: 13, flexWrap: "wrap" }}>
-        {ticket.geo?.adminRegion && (
-          <span className="muted-text">{ticket.geo.adminRegion}</span>
-        )}
-        {need && (
-          <span className="muted-text">
-            Needs {need.quantity} {need.unit} ({need.resourceCategory})
-          </span>
-        )}
-        {match.contributionImpactPct > 0 && (
-          <span className="muted-text">
-            You can fill <strong>{Math.round(match.contributionImpactPct)}%</strong>
-          </span>
-        )}
-        {typeof match.geoDistanceKm === "number" && (
-          <span className="muted-text">{Math.round(match.geoDistanceKm)} km away</span>
-        )}
-      </div>
-      {match.reason && (
-        <p className="muted-text" style={{ fontSize: 12, margin: 0 }}>
-          {match.reason}
-        </p>
-      )}
-    </article>
+      <span className="dash-card-action">
+        {ticket.rapid ? "Respond" : "View"}
+      </span>
+    </Link>
   );
 }

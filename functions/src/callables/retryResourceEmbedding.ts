@@ -3,6 +3,7 @@ import { defineSecret } from "firebase-functions/params";
 import * as admin from "firebase-admin";
 import { RetryResourceEmbeddingSchema } from "../lib/schemas";
 import { embedResourceDoc, resolveGeminiKey } from "../lib/embedResource";
+import { backfillMatchesForResource } from "../lib/backfillResourceMatches";
 
 /**
  * Retry the embedding for a resource the caller owns. Resets status to
@@ -44,6 +45,13 @@ export const retryResourceEmbedding = onCall(
     const status = await embedResourceDoc(ref, data, apiKey, {
       resourceId: ref.id,
     });
+
+    if (status === "ok" || status === "skipped") {
+      const fresh = await ref.get();
+      if (fresh.exists) {
+        await backfillMatchesForResource(ref.id, fresh.data()!);
+      }
+    }
 
     return { resourceId: ref.id, embeddingStatus: status };
   },

@@ -42,6 +42,36 @@ async function embedOnce(ai: GoogleGenAI, text: string): Promise<number[]> {
 }
 
 /**
+ * Deterministic 768-d unit vector derived from text — used as a dev fallback
+ * when no Gemini API key is configured. Same input always produces the same
+ * vector, so cosine similarity between two synthetic embeddings is stable
+ * across runs. Real embeddings still produce far better matches when a key
+ * is present; this just keeps the matching pipeline functional in local dev.
+ */
+function syntheticEmbedding(text: string): number[] {
+  const vec = new Array<number>(EMBEDDING_DIM);
+  // 32-bit FNV-like rolling hash, expanded into a stable pseudo-random
+  // sequence by mixing in the index.
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  for (let i = 0; i < EMBEDDING_DIM; i++) {
+    h ^= i + 0x9e3779b9 + (h << 6) + (h >>> 2);
+    h = h >>> 0;
+    // Map to [-1, 1)
+    vec[i] = (h / 0xffffffff) * 2 - 1;
+  }
+  // L2-normalize so cosine similarity collapses to a plain dot product.
+  let mag = 0;
+  for (const v of vec) mag += v * v;
+  mag = Math.sqrt(mag) || 1;
+  for (let i = 0; i < EMBEDDING_DIM; i++) vec[i] /= mag;
+  return vec;
+}
+
+/**
  * Generate a 768-d embedding for a resource doc and write it back. If no API
  * key is available, mark embeddingStatus="ok" with version="skipped" — search
  * just won't surface it but the UI doesn't show an alarming "failed" state.
@@ -54,9 +84,14 @@ export async function embedResourceDoc(
   ctx: { resourceId: string },
 ): Promise<"ok" | "skipped" | "failed"> {
   if (!apiKey) {
-    logger.warn("GEMINI_API_KEY missing — skipping embedding", ctx);
+    logger.warn(
+      "GEMINI_API_KEY missing — writing synthetic dev embedding",
+      ctx,
+    );
+    const synthetic = syntheticEmbedding(buildResourceEmbeddingInput(data));
     await ref.update({
-      embeddingVersion: "skipped",
+      embedding: FieldValue.vector(synthetic),
+      embeddingVersion: "synthetic-dev",
       embeddingStatus: "ok",
     });
     return "skipped";
