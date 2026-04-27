@@ -25,12 +25,15 @@ export { onPhotoProofUploaded } from "./triggers/onPhotoProofUploaded";
 export { onSignoffRecorded } from "./triggers/onSignoffRecorded";
 export { onTicketClosed } from "./triggers/onTicketClosed";
 export { onResourceCreated } from "./triggers/onResourceCreated";
+export { onResourceUpdated } from "./triggers/onResourceUpdated";
+export { onResourceDeleted } from "./triggers/onResourceDeleted";
 export { appendAuditLog } from "./triggers/appendAuditLog";
 
 // Scheduled jobs
 export { reliabilityDecaySweep } from "./scheduled/reliabilityDecaySweep";
 export { stuckStageSweep } from "./scheduled/stuckStageSweep";
 export { emergencyExpirySweep } from "./scheduled/emergencyExpirySweep";
+export { proposedPledgeTtlSweep } from "./scheduled/proposedPledgeTtlSweep";
 
 // Callables
 export { approveOrg } from "./callables/approveOrg";
@@ -39,6 +42,7 @@ export { createResource } from "./callables/createResource";
 export { updateResource } from "./callables/updateResource";
 export { retryResourceEmbedding } from "./callables/retryResourceEmbedding";
 export { pledge } from "./callables/pledge";
+export { respondToPledge } from "./callables/respondToPledge";
 export { signAgreement } from "./callables/signAgreement";
 export { advancePhase } from "./callables/advancePhase";
 export { recordSignoff } from "./callables/recordSignoff";

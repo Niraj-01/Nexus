@@ -3,6 +3,7 @@ import { logger } from "firebase-functions/v2";
 import * as admin from "firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { reliabilityScore, type OrgLite } from "../lib/matching";
+import { commitInventory, refundInventory } from "../lib/inventory";
 
 /**
  * Mints `badges/{ticketId__orgId}` for the host plus every SIGNED_OFF
@@ -28,6 +29,41 @@ export const onTicketClosed = onDocumentUpdated("tickets/{ticketId}", async (eve
 
   const { ticketId } = event.params;
   const db = admin.firestore();
+
+  // Inventory bookkeeping first: every contribution that reserved inventory
+  // gets either committed (quantity actually moves) or refunded (reservation
+  // released). Run one transaction per resource so concurrent pledges on the
+  // same resource (different tickets) don't get clobbered.
+  const allContribsSnap = await db
+    .collection("tickets")
+    .doc(ticketId)
+    .collection("contributions")
+    .get();
+
+  for (const doc of allContribsSnap.docs) {
+    const c = doc.data();
+    const status = String(c.status ?? "");
+    const resourceId = String(c.resourceId ?? "");
+    const qty = Number(c.offered?.quantity ?? 0);
+    if (!resourceId || qty <= 0) continue;
+    try {
+      if (status === "SIGNED_OFF") {
+        await db.runTransaction((tx) => commitInventory(tx, resourceId, qty));
+      } else if (status === "DISPUTED" || status === "EXECUTED") {
+        // EXECUTED here means signoff trigger closed the ticket without
+        // converting it — defensive refund to keep inventory honest.
+        await db.runTransaction((tx) => refundInventory(tx, resourceId, qty));
+      }
+    } catch (err) {
+      logger.error("inventory bookkeeping failed", {
+        ticketId,
+        contributionId: doc.id,
+        status,
+        resourceId,
+        err: String(err),
+      });
+    }
+  }
 
   const signedSnap = await db
     .collection("tickets")

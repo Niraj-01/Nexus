@@ -65,6 +65,13 @@ export function AppTopbar() {
           })}
         </nav>
         <div className="row" style={{ gap: 8 }}>
+          <Link
+            href="/tickets/new"
+            className="btn btn-primary"
+            style={{ padding: "8px 14px", fontSize: 13 }}
+          >
+            Raise a ticket
+          </Link>
           <Link href="/profile" className="profile-pill" aria-label="Account">
             <span className="profile-pill__avatar" aria-hidden>{avatar}</span>
             <span className="profile-pill__label">{label}</span>

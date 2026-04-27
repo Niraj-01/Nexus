@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { db, storage } from "@/lib/firebase/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import { callAdvancePhase, callRecordSignoff } from "@/lib/callables";
+import { callAdvancePhase, callRecordSignoff, callRespondToPledge } from "@/lib/callables";
 import { authErrorToMessage } from "@/lib/auth/errors";
 import { PledgeForm } from "./PledgeForm";
 
@@ -374,9 +374,27 @@ export function TicketDetail({ ticketId }: { ticketId: string }) {
   }
 
   const isHost = orgId === ticket.hostOrgId;
-  const myContribution = orgId
-    ? contribs.find((c) => c.contributorOrgId === orgId)
-    : undefined;
+
+  // Multiple non-REJECTED contributions per (ticket, org) are now allowed
+  // to support incremental partial fulfillment. REJECTED contributions are
+  // historical and don't block re-pledging.
+  const myContributions = orgId
+    ? contribs.filter((c) => c.contributorOrgId === orgId && c.status !== "REJECTED")
+    : [];
+  const myContribution = myContributions[0];
+  const hasExecutedSelf = myContributions.some((c) => c.status === "EXECUTED");
+  const proposedForHost = isHost
+    ? contribs.filter((c) => c.status === "PROPOSED")
+    : [];
+
+  // Sum of non-REJECTED contribution quantities per need index — mirrors
+  // the server-side per-need cap so PledgeForm can clamp input client-side.
+  const fulfilledByNeed = ticket.needs.map((_, i) =>
+    contribs
+      .filter((c) => c.status !== "REJECTED" && c.needIndex === i)
+      .reduce((sum, c) => sum + c.offered.quantity, 0),
+  );
+
   const phaseLabel = PHASE_LABEL[ticket.phase];
   const isEmergency = ticket.urgency === "EMERGENCY";
 
@@ -515,6 +533,7 @@ export function TicketDetail({ ticketId }: { ticketId: string }) {
               ticketId={ticketId}
               ticket={ticket}
               match={match}
+              fulfilledByNeed={fulfilledByNeed}
             />
           ) : (
             <ClosedOrLockedCard ticket={ticket} />
@@ -553,6 +572,9 @@ export function TicketDetail({ ticketId }: { ticketId: string }) {
           ticket={ticket}
           contribs={contribs}
           orgNames={orgNames}
+          isHost={isHost}
+          ticketId={ticketId}
+          proposedForHost={proposedForHost}
         />
       )}
 
@@ -578,10 +600,12 @@ function ContributeCard({
   ticketId,
   ticket,
   match,
+  fulfilledByNeed,
 }: {
   ticketId: string;
   ticket: TicketDoc;
   match: MatchDoc | null;
+  fulfilledByNeed: number[];
 }) {
   const canPledge = match?.contributionFeasibility ?? false;
 
@@ -591,7 +615,7 @@ function ContributeCard({
       <p className="td-contribute-body">
         {ticket.rapid
           ? "Rapid flow — your pledge reflects immediately. Delivery verification handled after the fact."
-          : "Structured flow — pledge is committed immediately and verified by you and the host on completion."}
+          : "Structured flow — your pledge starts as PROPOSED and waits for the host to approve before reserving inventory."}
       </p>
 
       {match && (
@@ -615,7 +639,13 @@ function ContributeCard({
       )}
 
       {canPledge ? (
-        <PledgeForm ticketId={ticketId} needs={ticket.needs} match={match} />
+        <PledgeForm
+          ticketId={ticketId}
+          needs={ticket.needs}
+          rapid={ticket.rapid}
+          match={match}
+          fulfilledByNeed={fulfilledByNeed}
+        />
       ) : (
         <div className="td-empty" style={{ padding: 20 }}>
           {match
@@ -890,12 +920,13 @@ function SignoffPanel({ ticketId }: { ticketId: string }) {
   const [busy, setBusy] = useState(false);
   const [showDispute, setShowDispute] = useState(false);
   const [note, setNote] = useState("");
-  const requestId = useMemo(randomRequestId, []);
 
   async function submit(decision: "APPROVED" | "DISPUTED") {
     setBusy(true);
     try {
-      await callRecordSignoff({ ticketId, decision, note, requestId });
+      // Fresh requestId per click — APPROVED then DISPUTED on retry is a
+      // logically distinct call, not a network retry.
+      await callRecordSignoff({ ticketId, decision, note, requestId: randomRequestId() });
       toast.success(decision === "APPROVED" ? "Delivery confirmed." : "Dispute recorded.");
     } catch (err) {
       toast.error(authErrorToMessage(err));
@@ -970,40 +1001,58 @@ function ContributionsTab({
   ticket,
   contribs,
   orgNames,
+  isHost,
+  ticketId,
+  proposedForHost,
 }: {
   ticket: TicketDoc;
   contribs: ContributionDoc[];
   orgNames: Record<string, string>;
+  isHost: boolean;
+  ticketId: string;
+  proposedForHost: ContributionDoc[];
 }) {
-  if (contribs.length === 0) {
-    return <div className="td-empty">No contributions yet.</div>;
-  }
   return (
-    <div className="td-contrib-list">
-      {contribs.map((c) => {
-        const orgName = orgNames[c.contributorOrgId] ?? c.contributorOrgId.slice(0, 6);
-        const need = ticket.needs[c.needIndex];
-        const status = STATUS_LABEL[c.status] ?? { label: c.status, cls: "" };
-        return (
-          <div key={c.id} className="td-contrib-row">
-            <div
-              className="td-contrib-avatar"
-              style={{ "--av-hue": hueFor(c.contributorOrgId) } as React.CSSProperties}
-            >
-              {orgName.charAt(0).toUpperCase()}
-            </div>
-            <div className="td-contrib-info">
-              <span className="td-contrib-org">{orgName}</span>
-              <span className="td-contrib-detail">
-                {need?.resourceCategory ?? c.offered.kind} ×{" "}
-                {formatQty(c.offered.quantity)} {c.offered.unit}
-              </span>
-            </div>
-            <span className={`td-contrib-status ${status.cls}`}>{status.label}</span>
-            <span className="td-contrib-time">{formatTime(c.committedAt)}</span>
-          </div>
-        );
-      })}
+    <div className="stack" style={{ gap: 16 }}>
+      {/* Host: proposed pledges awaiting approval */}
+      {isHost && proposedForHost.length > 0 && (
+        <ProposedPledgesPanel
+          ticketId={ticketId}
+          proposed={proposedForHost}
+          orgNames={orgNames}
+        />
+      )}
+
+      {contribs.length === 0 ? (
+        <div className="td-empty">No contributions yet.</div>
+      ) : (
+        <div className="td-contrib-list">
+          {contribs.map((c) => {
+            const orgName = orgNames[c.contributorOrgId] ?? c.contributorOrgId.slice(0, 6);
+            const need = ticket.needs[c.needIndex];
+            const status = STATUS_LABEL[c.status] ?? { label: c.status, cls: "" };
+            return (
+              <div key={c.id} className="td-contrib-row">
+                <div
+                  className="td-contrib-avatar"
+                  style={{ "--av-hue": hueFor(c.contributorOrgId) } as React.CSSProperties}
+                >
+                  {orgName.charAt(0).toUpperCase()}
+                </div>
+                <div className="td-contrib-info">
+                  <span className="td-contrib-org">{orgName}</span>
+                  <span className="td-contrib-detail">
+                    {need?.resourceCategory ?? c.offered.kind} ×{" "}
+                    {formatQty(c.offered.quantity)} {c.offered.unit}
+                  </span>
+                </div>
+                <span className={`td-contrib-status ${status.cls}`}>{status.label}</span>
+                <span className="td-contrib-time">{formatTime(c.committedAt)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -1155,3 +1204,122 @@ export function TicketDetailBack() {
     </Link>
   );
 }
+
+function ProposedPledgesPanel({
+  ticketId,
+  proposed,
+  orgNames,
+}: {
+  ticketId: string;
+  proposed: ContributionDoc[];
+  orgNames: Record<string, string>;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+
+  async function respond(
+    contributionId: string,
+    decision: "APPROVE" | "REJECT",
+    rejectNote?: string,
+  ) {
+    setBusyId(contributionId);
+    try {
+      await callRespondToPledge({
+        ticketId,
+        contributionId,
+        decision,
+        note: rejectNote ?? "",
+        requestId: randomRequestId(),
+      });
+      toast.success(
+        decision === "APPROVE" ? "Pledge approved." : "Pledge rejected.",
+      );
+      setRejectingId(null);
+      setNote("");
+    } catch (err) {
+      toast.error(authErrorToMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <section className="stack-sm">
+      <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>
+        Proposed pledges ({proposed.length})
+      </h2>
+      <p className="muted-text" style={{ margin: 0, fontSize: 13 }}>
+        Approving reserves the contributor&apos;s resource and moves your progress bar.
+        Rejecting frees nothing — the contributor can re-pledge with a different resource.
+      </p>
+      {proposed.map((c) => {
+        const isRejecting = rejectingId === c.id;
+        return (
+          <div key={c.id} className="card stack-sm">
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+              <strong>{orgNames[c.contributorOrgId] ?? c.contributorOrgId.slice(0, 6)}</strong>
+              <span style={{ fontSize: 13 }}>
+                {formatQty(c.offered.quantity)} {c.offered.unit} · need #{c.needIndex + 1}
+              </span>
+            </div>
+            {isRejecting && (
+              <input
+                type="text"
+                className="input"
+                placeholder="Reason (optional)"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                disabled={busyId === c.id}
+                maxLength={500}
+              />
+            )}
+            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => respond(c.id, "APPROVE")}
+                disabled={busyId === c.id}
+              >
+                {busyId === c.id ? "Working…" : "Approve"}
+              </button>
+              {!isRejecting ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setRejectingId(c.id)}
+                  disabled={busyId !== null}
+                >
+                  Reject
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => respond(c.id, "REJECT", note)}
+                    disabled={busyId === c.id}
+                  >
+                    Confirm reject
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setRejectingId(null);
+                      setNote("");
+                    }}
+                    disabled={busyId === c.id}
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+

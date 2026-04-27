@@ -35,7 +35,10 @@ function formatINR(n: number): string {
 
 export function ResourceList() {
   const { user, loading, claims } = useAuth();
-  const orgStatus = useOrgStatus(claims?.orgId ?? null);
+  // Subscribe by uid as a fallback so we can show the right "pending review"
+  // message during the PENDING_REVIEW window — when claims.orgId is still
+  // unset but the org doc exists at organizations/{uid}.
+  const orgStatus = useOrgStatus(claims?.orgId ?? user?.uid ?? null);
   const [rows, setRows] = useState<Row[] | null>(null);
   const searchParams = useSearchParams();
   const justCreatedId = searchParams.get("new");
@@ -79,7 +82,41 @@ export function ResourceList() {
 
   if (loading || orgStatus.loading) return <p className="muted-text">Loading…</p>;
   if (!user) return <p className="muted-text">Sign in to view your resources.</p>;
+
+  // Status-aware gate. The approval requirement is unchanged — we just
+  // tell the user *which* state they're actually in.
+  const liveStatus = orgStatus.status;
+  if (!liveStatus) {
+    // No org doc yet → the user genuinely hasn't onboarded.
+    return (
+      <div className="card stack">
+        <p className="muted-text">Finish onboarding to start listing resources.</p>
+        <Link href="/onboard" className="btn btn-primary">Go to onboarding</Link>
+      </div>
+    );
+  }
+  if (liveStatus === "PENDING_REVIEW") {
+    // Onboarded but waiting on admin approval. Don't show the form, don't
+    // tell them to "finish onboarding" — they already did.
+    return (
+      <div className="card stack">
+        <strong>Pending admin approval</strong>
+        <p className="muted-text">
+          Your organization is awaiting admin review. You&apos;ll be able to list resources
+          as soon as your account is approved — no need to sign in again.
+        </p>
+      </div>
+    );
+  }
+  if (liveStatus === "ACTIVE" && !claims?.orgId) {
+    // Brief window between server-side approval and client token refresh.
+    // AuthProvider auto-refreshes; we just show a placeholder so the page
+    // doesn't flash "finish onboarding" misleadingly.
+    return <p className="muted-text">Refreshing your session…</p>;
+  }
   if (!claims?.orgId) {
+    // Defensive: any other status without a claim falls back to onboarding
+    // hint. Shouldn't be hit in practice.
     return (
       <div className="card stack">
         <p className="muted-text">Finish onboarding to start listing resources.</p>
@@ -88,7 +125,7 @@ export function ResourceList() {
     );
   }
 
-  const canAdd = orgStatus.status === "ACTIVE";
+  const canAdd = liveStatus === "ACTIVE";
 
   return (
     <div className="stack">

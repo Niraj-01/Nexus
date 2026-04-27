@@ -35,7 +35,7 @@
    - **Niraj** — Org type: `NGO`, Org name: `Niraj Foundation`, Region: `Panvel, MH`
    - **Albin** — Org type: `ORG`, Org name: `Albin Capital`, Region: `Panvel, MH`
    - **Dhrupad** — Org type: `ORG`, Org name: `Dhrupad Manufacturing`, Region: `Panvel, MH`
-5. Submit. Your dashboard will now say **"Pending review"** — that's expected. Wait for A.2.
+5. Submit. Your dashboard will now say **"Pending admin approval"** — that's expected; the approval gate must run before you can list resources or raise tickets. Wait for A.2. (If you click `/resources` early you'll see a clearer "Your organization is awaiting admin review" message — same gate, just a different page.)
 
 ## A.2 — Dhrupad: approve all three orgs from `/admin`
 
@@ -72,7 +72,7 @@ the page, his org pops in without a refresh.
 
 ### That's it
 
-- **Niraj and Albin:** your dashboard will auto-transition from "Pending review" to live within a second of being approved. The browser detects the status change and refreshes your ID token in place — no sign-out needed.
+- **Niraj and Albin:** within ~1 second of being approved, whatever page you're on transitions itself to the live state — no sign-out, no manual refresh. The auto-refresh runs in `AuthProvider`, so it fires on `/dashboard`, `/resources`, `/tickets/...` — every page.
 - Continue with A.3.
 
 > **Backup CLI flow:** if `/admin` is down for any reason, you can run
@@ -82,7 +82,7 @@ the page, his org pops in without a refresh.
 > **Troubleshooting**
 > - "Access denied" but you signed in as Dhrupad → check the Google account picker; you may have picked the wrong one. Sign out and try again.
 > - Bootstrap errors → check Firebase Console → App Hosting → backend `nexus` → Logs for the `/api/admin/bootstrap` route.
-> - Approved org's user still sees "Pending review" 5+ seconds after approval → manually refresh their browser tab (the auto-refresh effect should run but may have hit a transient error).
+> - Approved org's user still sees "Pending admin approval" 5+ seconds after approval → manually refresh their browser tab (the auto-refresh effect in `AuthProvider` should run but may have hit a transient error).
 
 ## A.3 — Albin: list your FUNDS resource
 
@@ -148,7 +148,7 @@ Skip this if you're short on time — the test still passes either way.
 
 **Niraj:**
 
-1. Go to **`<APP_URL>/tickets/new`**
+1. Click **"Raise a ticket"** in the topbar (or the hero button on the dashboard) — both link to `/tickets/new`. (You can still type the URL if you want.)
 2. Fill in the form exactly:
 
 | Field | Value |
@@ -180,6 +180,7 @@ Skip this if you're short on time — the test still passes either way.
 - Browser jumps to `/tickets/<some-id>` — **copy this URL into your team chat** so Albin and Dhrupad can use it
 - Phase chip: **"Open"** (blue)
 - Overall progress: **0%**
+- The "Raise a ticket" button is still in the topbar; tickets/new isn't a one-shot.
 
 ✋ **Wait 10 seconds** for the matching trigger to run before Albin and Dhrupad refresh their dashboards.
 
@@ -192,47 +193,72 @@ Skip this if you're short on time — the test still passes either way.
 1. Go to **`<APP_URL>/dashboard`** (or refresh if you're already there)
 
 **You should see:**
-- Under **"Recommended for you" → "Best matches"**, a card titled **"100 desks for Panvel school"** appears
-- A **"Pledge"** button on the right side of the card
-- Below the title, a small "Your contribution potential" line showing what % you can fill
+- Under **"Recommended for you"**, a card titled **"100 desks for Panvel school"** appears. The feed is now driven by the `matches/` collection (per-org match docs the matching trigger writes), not by a flat tickets list.
+- The card shows a "fills X%" chip from the match doc plus a one-liner reason ("You listed FUNDS in Panvel" / "You listed MANUFACTURING in Panvel").
+- A **"View"** button on the right side of the card.
 
-If the card doesn't appear, wait another 10 seconds and refresh — the matching trigger sometimes cold-starts.
+If the card doesn't appear, wait another 10 seconds and refresh — the matching trigger and embedding step occasionally cold-start. **If you see the empty-state "No matches yet — list more resources or wait for new tickets to land"**, your resource hasn't been embedded yet — check `resources/<your id>.embeddingStatus`; it should say `"ok"` before matches materialize.
 
 ---
 
-## STEP 3a — Albin pledges FUNDS
+## STEP 3a — Albin proposes a FUNDS pledge
 
 **Albin:**
 
-1. On `/dashboard`, click **"Pledge"** on the ticket card → opens `/tickets/<id>`
+1. On `/dashboard`, click **"View"** on the ticket card → opens `/tickets/<id>`
 2. Scroll down to the **"Pledge to this ticket"** card (it appears automatically)
-3. The dropdown should say **"#1 · FUNDS (40 desks-equivalent)"** — leave it
-4. Quantity should pre-fill with **40** — leave it
-5. Click **"Pledge now"**
+3. The form has FOUR fields. Don't change any of them unless you want to:
+   - **Need:** `#1 · FUNDS (40 desks-equivalent)` — leave it.
+   - **Your resource:** `Demo financial pool — 100000 INR free` — picked from your listed resources, filtered to FUNDS, with the live free-quantity shown.
+   - **Quantity (INR):** pre-fills at **40000** — the lower of (your inventory free, remaining-need cap). Leave it.
+   - **Notes (optional):** leave blank.
+4. The hint line below the inputs reads: `Remaining capacity on this need: 40000 INR · your inventory free: 100000 INR`.
+5. The button label is **"Submit for approval"** (not "Pledge now") because this is a Normal-urgency ticket, so the host's explicit approval is required. Click it.
 
 **You should see:**
-- Toast: **"Pledge committed. Ticket is now 40% fulfilled."**
-- The pledge form gets replaced by a green card: **"Your contribution is committed — 40 desks-equivalent · status COMMITTED"**
-- The Need #1 progress bar fills to **100%**
-- Overall progress jumps to **40%**
+- Toast: **"Pledge proposed. Waiting for the host to approve it."**
+- The pledge form stays visible (you can submit another partial later if you want), and a new **"Your contributions (1)"** card appears below it: `40000 INR · need #1 · status PROPOSED`.
+- **Need #1 progress bar does NOT move yet.** Overall progress stays at **0%**. Inventory is not reserved either — that all happens at host APPROVE time.
 
 ---
 
-## STEP 3b — Dhrupad pledges MANUFACTURING
+## STEP 3a-bis — Niraj approves Albin's pledge
+
+**Niraj:**
+
+1. Open the ticket URL (refresh if you're already there).
+2. Scroll past "Host controls" to the new **"Proposed pledges (1)"** section. This panel is host-only and only renders while at least one PROPOSED pledge exists.
+3. Card shows: `Albin Capital · 40000 INR · need #1` with **Approve** and **Reject** buttons.
+4. Click **Approve**.
+
+**You should see (within ~2s, on every open browser of this ticket):**
+- Toast (Niraj): **"Pledge approved."**
+- The "Proposed pledges" section disappears — no PROPOSED items remain.
+- **Need #1 progress bar fills to 100%.** Overall progress jumps to **40%**.
+- On Albin's ticket page: his "Your contributions" card flips to `status COMMITTED`. Behind the scenes `resources/<Albin's resource>.reservedQuantity` is now `40000`.
+
+---
+
+## STEP 3b — Dhrupad proposes MANUFACTURING; Niraj approves
 
 **Dhrupad:**
 
-1. Open the ticket URL Niraj shared (or click "Pledge" from your `/dashboard`)
-2. Scroll to **"Pledge to this ticket"**
-3. The dropdown should say **"#2 · MANUFACTURING (60 desks)"** — leave it
-4. Quantity should pre-fill with **60** — leave it
-5. Click **"Pledge now"**
+1. Open the ticket URL Niraj shared (or click **"View"** from your `/dashboard`).
+2. Scroll to **"Pledge to this ticket"**:
+   - **Need:** `#2 · MANUFACTURING (60 desks)`
+   - **Your resource:** `Demo desk production line — 200 desks free`
+   - **Quantity:** pre-fills at **60**.
+3. Click **"Submit for approval"** → toast: **"Pledge proposed. Waiting for the host to approve it."**
+
+**Niraj:**
+
+4. Refresh the ticket. **"Proposed pledges (1)"** is back, this time with `Dhrupad Manufacturing · 60 desks · need #2`. Click **Approve**.
 
 **You should see:**
-- Toast: **"Pledge committed. Ticket is now 100% fulfilled."**
-- Need #2 progress bar fills to **100%**
-- Overall progress: **100%**
-- A "Contributors (2)" strip appears at the bottom showing both org names
+- Toast (Niraj): **"Pledge approved."**
+- Need #2 progress bar fills to **100%**, overall progress jumps to **100%**.
+- Dhrupad's contribution flips to `status COMMITTED`; his resource's `reservedQuantity` is now `60`.
+- A **"Contributors (2)"** strip appears at the bottom of the ticket showing both org names.
 
 ---
 
@@ -248,6 +274,10 @@ If the card doesn't appear, wait another 10 seconds and refresh — the matching
 - Toast: **"Phase: EXECUTION"**
 - Phase chip flips to **"Executing"** (orange)
 - The "Host controls" card now shows a file picker + a "Mark execution complete" button
+
+**Preconditions enforced server-side (you don't need to check, just be aware):**
+- ≥1 COMMITTED contribution must exist. If you forgot to APPROVE in 3a-bis/3b and try to advance with everything still PROPOSED, you'll see *"Cannot advance to EXECUTION with zero COMMITTED contributions."*
+- Any pledge still in PROPOSED at this moment is **auto-rejected** in the same transaction with `rejectReason: "auto-rejected: ticket advanced before host approved"`. Their authors will silently see the row vanish from "Your contributions" — no toast, no error. (See failure test C.5 if you want to demo this on purpose.)
 
 ---
 
@@ -311,6 +341,8 @@ You can upload more if you want, but one is enough.
 
 **The ticket has auto-closed.** Done.
 
+> **Single signoff covers ALL of a contributor's contributions.** If a contributor pledged twice on the same ticket (see C.4 for the partial-fulfillment scenario), one click on "Confirm delivery" flips every EXECUTED contribution from that org to SIGNED_OFF in a single transaction. They don't need to confirm twice.
+
 ---
 
 ## STEP 6 — Verify it's actually closed
@@ -334,6 +366,7 @@ You can upload more if you want, but one is enough.
    - One for Albin (role: CONTRIBUTOR, ~40% × his reliability score)
    - One for Dhrupad (role: CONTRIBUTOR, ~60% × his reliability score)
 3. Open each org doc (`organizations/<orgId>`) → field `badges` should now have one new entry per closed ticket
+4. Open Albin's resource (`resources/<id>` → `Demo financial pool`) → `quantity` is now `60000` (was 100000), `reservedQuantity` is back to `0`, `status` is still `AVAILABLE`. Same shape on Dhrupad's resource: `quantity: 140` (was 200), `reservedQuantity: 0`. The `onTicketClosed` trigger ran `commitInventory` for every SIGNED_OFF contribution, so the kits really left the inventory.
 
 🎉 **The full lifecycle works.** This is what you'll show the judges.
 
@@ -368,18 +401,21 @@ Proves: a single dispute permanently blocks ticket closure.
 
 ## C.2 — An org with no resources can't pledge
 
-**Setup:** A fourth person (or one of you in incognito mode) signs up with a fresh email. Complete onboarding so the org exists, but **don't list any resources**.
+**Setup:** A fourth person (or one of you in incognito mode) signs up with a fresh email. Complete onboarding so the org exists, get Dhrupad to approve from `/admin`, but **don't list any resources**.
 
 1. Sign in as the new account
 2. Open `/dashboard`
 3. Open the failure-test ticket URL directly
 
 **You should see:**
-- Dashboard does NOT show the ticket under "Recommended for you"
-- On the ticket detail page, there is **no "Pledge" form** at all
-- The orphan account has literally no way to contribute
+- Dashboard "Recommended for you" shows the empty state: **"No matches yet — list more resources or wait for new tickets to land."** No ticket cards (no resource → no match docs got generated).
+- On the ticket detail page, the **"Pledge to this ticket"** form DOES render (form is shown whenever the ticket is OPEN_FOR_CONTRIBUTIONS), but:
+  - The "Your resource" dropdown shows `No matching resource listed`.
+  - The Submit button is disabled.
+  - A hint reads: `You need to list a FUNDS resource on your /resources page before pledging.` (or whichever category the selected need calls for).
+- Server-side: even if you bypassed the form and called the `pledge` callable directly with a fake `resourceId`, the server rejects with `"Resource not found"` or `"You can only pledge resources owned by your org"`.
 
-Proves: orgs without matching resources are invisible to the matching system.
+Proves: orgs without matching resources literally cannot pledge — the gate is enforced at three layers (matching feed, form filter, server callable).
 
 ---
 
@@ -398,6 +434,76 @@ Proves: badges only exist for fully-verified work.
 
 ---
 
+## C.4 — Incremental partial pledges (the 50→30 scenario)
+
+Demonstrates the multi-pledge-per-ticket flow that the schema and UI now support.
+
+**Setup:** Niraj raises a brand-new ticket: title "Failure test C.4", single need = **80 INR FUNDS** (no MANUFACTURING need this time). Albin already has his 100,000 INR `Demo financial pool` from A.3.
+
+1. **Albin (first pledge):** open the ticket. The pledge form's quantity pre-fills at `80` (the lower of inventory free and remaining-need cap). **Change it to 50** and submit. Toast: "Pledge proposed."
+2. **Niraj approves:** "Proposed pledges (1)" → Approve. Albin's contribution flips to COMMITTED, progress 62.5%, Albin's resource `reservedQuantity = 50`.
+3. **Albin (second pledge, same ticket, same browser tab — no reload required):** the pledge form is still visible. The hint line now reads `Remaining capacity on this need: 30 INR · your inventory free: 99950 INR`. Quantity pre-fills at `30`. Submit → second toast: "Pledge proposed."
+4. **Albin's "Your contributions (2)"** card now lists both pledges: `50 INR · status COMMITTED` and `30 INR · status PROPOSED`.
+5. **Niraj approves the second:** progress 100%, Albin's resource `reservedQuantity = 80`.
+
+**Verifies:**
+- Multiple non-REJECTED contributions per (ticket, org) are allowed.
+- Each submit mints a fresh `requestId` so the second submission doesn't collide on idempotency (no spurious 409).
+- The per-need cap (50 first → 30 remaining) is enforced and visible client-side before submit.
+
+---
+
+## C.5 — Phase advance auto-rejects stranded PROPOSED
+
+Demonstrates the safety net that prevents a contributor from being stuck in PROPOSED forever.
+
+**Setup:** Niraj raises a brand-new ticket with the standard FUNDS+MANUFACTURING needs.
+
+1. **Albin pledges 40 FUNDS** → PROPOSED. Niraj does NOT approve.
+2. **Dhrupad pledges 60 MANUFACTURING** → PROPOSED. Niraj approves Dhrupad's only.
+3. **Niraj clicks "Move to execution"** while Albin's pledge is still PROPOSED.
+
+**You should see:**
+- Toast (Niraj): "Phase: EXECUTION".
+- Albin's "Your contributions" card silently disappears (no toast on his end).
+- Firebase Console → Albin's contribution doc: `status: REJECTED`, `rejectedAt: <recent>`, `rejectReason: "auto-rejected: ticket advanced before host approved"`.
+- The ticket continues with only Dhrupad's MANUFACTURING contribution into EXECUTION → PENDING_SIGNOFF → CLOSED. Albin gets no badge.
+
+**Verifies:** the `advancePhase` transaction batch-rejects every PROPOSED contribution at the moment of advance — no orphaned proposals stay alive past their decision window.
+
+---
+
+## C.6 — Per-need over-pledge is blocked server-side
+
+**Setup:** Niraj raises a brand-new ticket with a single FUNDS need of **40 INR**.
+
+1. Albin pledges 40 → PROPOSED → Niraj approves → COMMITTED, need at 100%.
+2. Albin tries to pledge 1 more INR on the same need.
+
+**You should see:**
+- Pledge form: quantity input `max=0`, hint reads `Remaining capacity on this need: 0 INR`. Submit button disabled.
+- If you bypass the disabled state (e.g. by typing in the input anyway), server rejects with toast: **"This need has only 0 INR of remaining capacity (you asked for 1)."**
+
+**Verifies:** the per-need cap holds even if the client UI is tampered with. The server's `pledge` callable counts every non-REJECTED contribution on the need (PROPOSED + COMMITTED + EXECUTED + SIGNED_OFF) when computing the cap.
+
+---
+
+## C.7 — Host rejects a proposal; contributor re-pledges
+
+**Setup:** Niraj raises a brand-new ticket with the standard needs. Albin pledges 40 FUNDS → PROPOSED.
+
+1. **Niraj clicks Reject** in "Proposed pledges". A note input appears — type `wrong category, please re-pledge with a different resource` and click **Confirm reject**.
+2. Toast (Niraj): "Pledge rejected."
+
+**You should see (Albin):**
+- His "Your contributions" card disappears (REJECTED contributions are filtered out client-side; the doc still exists in Firestore).
+- The pledge form is still visible with quantity defaulting to 40 again — he can submit a fresh proposal.
+- The per-need cap is back to 40 INR remaining (REJECTED contributions don't count toward the cap).
+
+**Verifies:** REJECTED contributions don't block re-pledging, and rejecting a proposal correctly refunds headroom on the per-need cap.
+
+---
+
 # Part D — Cleanup between runs
 
 If you want to re-test from scratch:
@@ -405,8 +511,13 @@ If you want to re-test from scratch:
 1. Firebase Console → Firestore → `tickets/` — delete the test ticket docs (this auto-deletes their subcollections)
 2. Firebase Console → Firestore → `badges/` — query `where ticketId == <oldTicketId>` and delete each result (3 per closed ticket)
 3. Each org's `organizations/<orgId>.badges` array still has the old entries — manually edit each org doc and remove them, or just leave them (next badges will append, not duplicate)
+4. **Resource inventory was actually consumed** by every closed ticket. Open `resources/<your resource id>` in the Firestore Console:
+   - `quantity` is decremented by the total committed amount across all closed tickets.
+   - `reservedQuantity` should be `0` (committed contributions have been consumed; any DISPUTED ones were refunded by `onTicketClosed`).
+   - To reset to the original numbers, edit the doc directly (set `quantity` back to `100000` / `200`, `reservedQuantity` to `0`, `status` to `AVAILABLE`).
+5. Stranded test contribution docs from C.4–C.7 have `rejectReason` fields that make them safe to bulk-delete without consequence — none of them ever reserved inventory.
 
-You **do not** need to re-create resources or re-onboard. Those persist.
+You **do not** need to re-onboard. Auth + org docs persist, and admin approval is sticky.
 
 ---
 
@@ -414,13 +525,85 @@ You **do not** need to re-create resources or re-onboard. Those persist.
 
 | What happened | Why | What to do |
 |---|---|---|
-| "Pledge" button missing on dashboard card | Your resource isn't ready yet | Wait 30 seconds and refresh. If still missing, check Firebase Console → `resources/<your resource id>` → field `embeddingStatus` should say `"ok"` |
+| "View" button missing on dashboard card | Your resource isn't ready yet | Wait 30 seconds and refresh. Check Firebase Console → `resources/<your resource id>` → `embeddingStatus` should say `"ok"`. Without an embedding, the matching trigger doesn't write a match doc, and the new `RecommendedTicketsList` only shows tickets you have a match for. |
+| "No matches yet" empty state on dashboard despite having a resource | Embedding still pending, or ticket category doesn't overlap your resource category | Check `embeddingStatus` first. If `ok`, confirm the ticket has at least one need with the same `resourceCategory` as your resource. |
+| "Pledge proposed" toast but progress bar didn't move | Non-rapid tickets land in PROPOSED until the host explicitly approves | Niraj opens the ticket → "Proposed pledges" panel → Approve. Inventory and progress only move on APPROVE. |
+| Submit shows "This need has only N units of remaining capacity" | The need is fully or partially fulfilled by other (or your own earlier) non-REJECTED pledges | Pledge a smaller amount, or wait for a host to REJECT a competing PROPOSED pledge to free headroom. |
+| Submit shows "Resource has only N units available" | Your resource is fully reserved across other open tickets | List more inventory in `/resources/new`, or wait for one of those tickets to close (`onTicketClosed` commits inventory and frees the reservation). |
+| Contribution silently disappeared from "Your contributions" | Either the host advanced phase before approving (auto-reject, see C.5) OR your PROPOSED pledge sat for 36h+ and the TTL sweep auto-rejected it | Open Firestore → contribution doc → read `rejectReason`. It tells you exactly which path triggered. |
+| "Move to execution" gives "Cannot advance to EXECUTION with zero COMMITTED contributions" | You're trying to advance but every pledge is still PROPOSED | Approve at least one pledge first (or pledge yourself if you also raised the ticket — but hosts can't pledge on their own tickets, so you actually need a contributor). |
 | "Move to execution" button doesn't show | You're not the host | Check that you're signed in as Niraj |
 | "Mark execution complete" gives an error | You haven't uploaded a proof yet | Upload one first, then click again |
 | "Confirm delivery" gives an error | Niraj hasn't advanced to EXECUTION yet | Tell Niraj to do Step 4 first |
 | Auto-close didn't fire after both signoffs | Trigger cold start | Wait another 15 seconds and refresh. If still nothing, in PowerShell: `firebase functions:log --only onSignoffRecorded` |
 | No badges after close | Trigger error | In PowerShell: `firebase functions:log --only onTicketClosed` |
+| Resource `quantity` didn't decrease after a closed ticket | Inventory commit didn't run | Check `firebase functions:log --only onTicketClosed` for errors in `commitInventory`. The trigger commits one transaction per SIGNED_OFF contribution; one transaction failure doesn't block the others. |
 | Can't sign in with Google | Domain not authorized | Dhrupad: open Firebase Console → Authentication → Settings → Authorized domains → add the URL hostname |
+
+---
+
+# Part F — What's new in this build (function map)
+
+A quick lookup of every behavioral change shipped across the three rounds, mapped to the exact file each lives in. Useful if a judge asks "where does that gate live?" or if you need to grep the compiled output during the demo.
+
+## Backend — callables (`functions/src/callables/`)
+
+| Behavior | File |
+|---|---|
+| Pledge requires `resourceId`; client sends quantity only; valuation, kind, unit, pctOfNeed all server-derived from the resource doc; rapid tickets commit instantly, normal tickets land as `PROPOSED`; per-need cap counts every non-REJECTED contribution | [`pledge.ts`](../functions/src/callables/pledge.ts) |
+| Host APPROVE/REJECT for a PROPOSED pledge; APPROVE re-checks the per-need cap, re-validates the resource, and calls `reserveInventory`; REJECT records `rejectedAt` + `rejectReason` with no inventory effect | [`respondToPledge.ts`](../functions/src/callables/respondToPledge.ts) (NEW) |
+| OPEN→EXECUTION batch-rejects every still-PROPOSED contribution in the same transaction; requires ≥1 COMMITTED; EXECUTION→PENDING_SIGNOFF requires ≥1 photo proof and ≥1 EXECUTED contribution | [`advancePhase.ts`](../functions/src/callables/advancePhase.ts) |
+| Single signoff covers ALL of a contributor's EXECUTED contributions on a ticket (multi-flip); deterministic signoff doc id `${ticketId}__${orgId}` keeps closure logic correct | [`recordSignoff.ts`](../functions/src/callables/recordSignoff.ts) |
+
+## Backend — triggers (`functions/src/triggers/`)
+
+| Behavior | File |
+|---|---|
+| Closure is gated on a strict `expected ⊆ received` set comparison of contributors; malformed contribution docs block close instead of silently undercounting | [`onSignoffRecorded.ts`](../functions/src/triggers/onSignoffRecorded.ts) |
+| On CLOSED, commits inventory for SIGNED_OFF contributions (`quantity -= qty, reservedQuantity -= qty`) and refunds for DISPUTED/EXECUTED contributions; mints badges from server-derived valuation | [`onTicketClosed.ts`](../functions/src/triggers/onTicketClosed.ts) |
+| Resource category change → walks every match referencing this resource; deletes if the new category doesn't fit the ticket's needs. Inventory state never deletes a match (per design rule) | [`onResourceUpdated.ts`](../functions/src/triggers/onResourceUpdated.ts) (NEW) |
+| Resource hard-deleted → bulk-deletes every match doc referencing it as `topResourceId` | [`onResourceDeleted.ts`](../functions/src/triggers/onResourceDeleted.ts) (NEW) |
+
+## Backend — scheduled (`functions/src/scheduled/`)
+
+| Behavior | File |
+|---|---|
+| Every 30 min: auto-reject every PROPOSED contribution older than 36h with `rejectReason: "auto-rejected: 36h TTL expired without host response"` so the per-need cap doesn't lock indefinitely | [`proposedPledgeTtlSweep.ts`](../functions/src/scheduled/proposedPledgeTtlSweep.ts) (NEW) |
+
+## Backend — shared lib (`functions/src/lib/`)
+
+| Behavior | File |
+|---|---|
+| `reserveInventory`, `commitInventory`, `refundInventory` — all transactional; derive `resource.status` from `(quantity, reservedQuantity)`. Used from `pledge`, `respondToPledge`, `onTicketClosed`. | [`inventory.ts`](../functions/src/lib/inventory.ts) (NEW) |
+| Two-state idempotency (IN_FLIGHT → COMPLETED); concurrent retries get `aborted` instead of silently returning success without re-running side effects | [`idempotency.ts`](../functions/src/lib/idempotency.ts) |
+
+## Frontend (`app/(app)/...` and `lib/auth/...`)
+
+| Behavior | File |
+|---|---|
+| Universal post-approval token refresh — when `organizations/{uid}.status` flips to ACTIVE while `claims.orgId` is missing, force `getIdToken(true)` once. Lifted from the dashboard so every page benefits. | [`lib/auth/AuthProvider.tsx`](../lib/auth/AuthProvider.tsx) |
+| Status-aware Resources gating: `undefined` org → "Finish onboarding"; `PENDING_REVIEW` → "Pending admin approval"; `ACTIVE` w/o claim → "Refreshing your session…"; `ACTIVE` w/ claim → full UI | [`app/(app)/resources/_components/ResourceList.tsx`](../app/(app)/resources/_components/ResourceList.tsx) |
+| Persistent "Raise a ticket" topbar link + dashboard hero CTA | [`app/(app)/_components/AppTopbar.tsx`](../app/(app)/_components/AppTopbar.tsx), [`app/(app)/dashboard/page.tsx`](../app/(app)/dashboard/page.tsx) |
+| Match-driven Recommended feed: two parallel queries against `matches/` (Flow A score-ranked + Flow B by createdAt); rapid floats to top; closed tickets filtered after one-shot ticket header fetch; strict empty state | [`app/(app)/dashboard/_components/RecommendedTicketsList.tsx`](../app/(app)/dashboard/_components/RecommendedTicketsList.tsx) |
+| Resource-picker pledge form (filtered by need category and free quantity), cap input = min(inventory free, remaining-need); shows `Remaining capacity` and `inventory free` hints; mints fresh requestId per submit | [`app/(app)/tickets/[id]/_components/PledgeForm.tsx`](../app/(app)/tickets/[id]/_components/PledgeForm.tsx) |
+| Multi-pledge "Your contributions" panel; host "Proposed pledges" panel with per-card APPROVE/REJECT; single signoff button covers all of a contributor's EXECUTED contributions; fresh requestId per signoff click; passes `fulfilledByNeed[]` cap to `PledgeForm` | [`app/(app)/tickets/[id]/_components/TicketDetail.tsx`](../app/(app)/tickets/[id]/_components/TicketDetail.tsx) |
+
+## Schemas & rules
+
+| Behavior | File |
+|---|---|
+| `Resource.reservedQuantity` (server-only); `Resource.status` derives from quantity + reservedQuantity | [`lib/schemas/resource.ts`](../lib/schemas/resource.ts) |
+| `Contribution.resourceId` is required (not optional); adds `rejectedAt`, `rejectReason`; new `RespondToPledgeInputSchema` for host APPROVE/REJECT | [`lib/schemas/contribution.ts`](../lib/schemas/contribution.ts) |
+| Firestore rules lock `resources.{quantity, reservedQuantity}` and `contributions.{resourceId, offered, rejectedAt, rejectReason}` to server-only on update | [`firestore.rules`](../firestore.rules) |
+| Three new composite indexes: matches by `(orgId, rapidBroadcast, score DESC)`, matches by `(orgId, rapidBroadcast, createdAt DESC)`, contributions collection-group by `(status ASC, createdAt ASC)` (TTL sweep) | [`firestore.indexes.json`](../firestore.indexes.json) |
+
+## Functions index — what got registered
+
+New exports added to [`functions/src/index.ts`](../functions/src/index.ts):
+- `respondToPledge` (callable)
+- `onResourceUpdated` (trigger)
+- `onResourceDeleted` (trigger)
+- `proposedPledgeTtlSweep` (scheduled, every 30 min)
 
 ---
 

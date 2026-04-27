@@ -28,6 +28,10 @@ export const ResourceSchema = z.object({
   }),
   emergencyContract: EmergencyContractSchema,
   status: ResourceStatus.default("AVAILABLE"),
+  // Sum of `offered.quantity` across all COMMITTED/EXECUTED/SIGNED_OFF
+  // contributions referencing this resource. Server-written by inventory
+  // helpers in `functions/src/lib/inventory.ts`.
+  reservedQuantity: z.number().nonnegative().default(0),
   // Server-written lifecycle — never set by client. Embedding (768d) lives here
   // on success; absent during pending/failed states.
   embeddingVersion: z.string().nullable().optional(),
@@ -41,8 +45,9 @@ export type Resource = z.infer<typeof ResourceSchema>;
  * both enforce this shape.
  */
 export const ResourceClientWriteSchema = ResourceSchema.omit({
-  orgId: true,          // set from request.auth, not the body
-  status: true,         // server sets AVAILABLE on create, later driven by contributions
+  orgId: true,            // set from request.auth, not the body
+  status: true,           // server sets AVAILABLE on create, later driven by contributions
+  reservedQuantity: true, // server-written; reservation bookkeeping
   embeddingVersion: true,
   embeddingStatus: true,
 }).extend({

@@ -9,6 +9,7 @@ import type {
   RaiseTicketInput,
   RecordSignoffInput,
   ResourceClientUpdate,
+  RespondToPledgeInput,
   ResourceClientWrite,
   TicketPhase,
 } from "@/lib/schemas";
@@ -44,8 +45,13 @@ export const callRetryResourceEmbedding = make<
 
 export const callPledge = make<
   PledgeInput,
-  { contributionId: string; progressPct: number }
+  { contributionId: string; status: "PROPOSED" | "COMMITTED"; progressPct: number }
 >("pledge");
+
+export const callRespondToPledge = make<
+  RespondToPledgeInput,
+  { status: "COMMITTED" | "REJECTED"; progressPct?: number }
+>("respondToPledge");
 
 export const callAdvancePhase = make<
   AdvancePhaseInput,

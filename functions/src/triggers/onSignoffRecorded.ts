@@ -37,11 +37,23 @@ export const onSignoffRecorded = onDocumentCreated(
       const contribSnap = await tx.get(contributionsRef);
       const expectedContributors = new Set<string>();
       let anyDisputedContrib = false;
+      let sawAnyContribution = false;
       for (const doc of contribSnap.docs) {
         const d = doc.data();
+        const contributorOrgId = String(d.contributorOrgId ?? "");
+        if (!contributorOrgId) {
+          // Defensive: a contribution doc without contributorOrgId is
+          // malformed. Block closure so we don't silently undercount.
+          logger.warn("contribution missing contributorOrgId — blocking close", {
+            ticketId,
+            contributionId: doc.id,
+          });
+          return;
+        }
         const status = String(d.status ?? "");
         if (status === "EXECUTED" || status === "SIGNED_OFF" || status === "DISPUTED") {
-          expectedContributors.add(String(d.contributorOrgId ?? ""));
+          expectedContributors.add(contributorOrgId);
+          sawAnyContribution = true;
         }
         if (status === "DISPUTED") anyDisputedContrib = true;
       }
@@ -50,8 +62,10 @@ export const onSignoffRecorded = onDocumentCreated(
         logger.info("ticket has DISPUTED contribution — staying PENDING_SIGNOFF", { ticketId });
         return;
       }
-      if (expectedContributors.size === 0) {
-        logger.info("no contributors to verify — staying PENDING_SIGNOFF", { ticketId });
+      if (!sawAnyContribution || expectedContributors.size === 0) {
+        // V11: empty expected set must NOT trigger close. Stays PENDING_SIGNOFF
+        // until either a real contribution lands or an admin intervenes.
+        logger.warn("no contributors to verify — staying PENDING_SIGNOFF", { ticketId });
         return;
       }
 

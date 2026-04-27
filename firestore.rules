@@ -115,11 +115,15 @@ service cloud.firestore {
       // org.status === 'ACTIVE' and runs via admin SDK (bypasses rules).
       // Client-direct create would skip that ACTIVE gate, so deny it here.
 
-      // Update: resource owner. status + embedding + embedding lifecycle
-      // transitions are server-only (driven by the embedding trigger and by
-      // contribution commits).
+      // Update: resource owner. status + embedding lifecycle transitions are
+      // server-only (driven by the embedding trigger and by contribution
+      // commits). quantity + reservedQuantity are server-only — inventory
+      // bookkeeping happens inside reserveInventory/commitInventory/
+      // refundInventory in the Cloud Functions, never from the client.
       allow update: if isOrgMember(resource.data.orgId)
         && !('status'           in request.resource.data.diff(resource.data).affectedKeys())
+        && !('quantity'         in request.resource.data.diff(resource.data).affectedKeys())
+        && !('reservedQuantity' in request.resource.data.diff(resource.data).affectedKeys())
         && !('embedding'        in request.resource.data.diff(resource.data).affectedKeys())
         && !('embeddingVersion' in request.resource.data.diff(resource.data).affectedKeys())
         && !('embeddingStatus'  in request.resource.data.diff(resource.data).affectedKeys());
@@ -192,19 +196,27 @@ service cloud.firestore {
           && !('committedAt' in request.resource.data)
           && !('signedOffAt' in request.resource.data);
 
-        // Update: contributor may edit offered/notes while PROPOSED;
-        // status/commitPath/agreementId/timestamps server-only.
+        // Update: contributor may edit notes while PROPOSED;
+        // status/commitPath/agreementId/timestamps server-only. resourceId
+        // and offered are server-derived from the resource doc at pledge
+        // time and immutable thereafter — letting a client mutate them
+        // would let them re-target the contribution at a different (or
+        // larger / more valuable) resource after the host approved it.
         allow update: if (
             isOrgMember(resource.data.contributorOrgId) ||
             isOrgMember(get(/databases/$(database)/documents/tickets/$(ticketId)).data.hostOrgId)
           )
-          && !('status'       in request.resource.data.diff(resource.data).affectedKeys())
-          && !('commitPath'   in request.resource.data.diff(resource.data).affectedKeys())
-          && !('agreementId'  in request.resource.data.diff(resource.data).affectedKeys())
-          && !('committedAt'  in request.resource.data.diff(resource.data).affectedKeys())
-          && !('signedOffAt'  in request.resource.data.diff(resource.data).affectedKeys())
+          && !('status'           in request.resource.data.diff(resource.data).affectedKeys())
+          && !('commitPath'       in request.resource.data.diff(resource.data).affectedKeys())
+          && !('agreementId'      in request.resource.data.diff(resource.data).affectedKeys())
+          && !('committedAt'      in request.resource.data.diff(resource.data).affectedKeys())
+          && !('signedOffAt'      in request.resource.data.diff(resource.data).affectedKeys())
+          && !('rejectedAt'       in request.resource.data.diff(resource.data).affectedKeys())
+          && !('rejectReason'     in request.resource.data.diff(resource.data).affectedKeys())
           && !('contributorOrgId' in request.resource.data.diff(resource.data).affectedKeys())
-          && !('needIndex'    in request.resource.data.diff(resource.data).affectedKeys());
+          && !('needIndex'        in request.resource.data.diff(resource.data).affectedKeys())
+          && !('resourceId'       in request.resource.data.diff(resource.data).affectedKeys())
+          && !('offered'          in request.resource.data.diff(resource.data).affectedKeys());
 
         allow write: if isPlatformAdmin();
       }

@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useUserProfile } from "@/lib/auth/useUserProfile";
 import { useOrgRecord } from "@/lib/onboarding/useOrgRecord";
@@ -33,19 +32,9 @@ export default function Dashboard() {
   const orgStatus = useOrgStatus(orgId);
   const orgRecord = useOrgRecord(user?.uid ?? null);
 
-  // Auto-refresh ID token when the admin approves us. Without this, the
-  // user would have to sign out and back in to pick up their new
-  // {role, orgId} claims after approval. With this, the dashboard
-  // transitions from "Pending review" to active within ~1s.
-  const liveStatus = orgStatus.loading ? null : orgStatus.status;
-  useEffect(() => {
-    if (!user) return;
-    if (liveStatus === "ACTIVE" && !claims?.orgId) {
-      void user.getIdToken(true).catch((err) => {
-        console.warn("[dashboard] post-approval token refresh failed", err);
-      });
-    }
-  }, [user, liveStatus, claims?.orgId]);
+  // Token refresh on approval is now handled centrally in AuthProvider so
+  // every page (including /resources) picks up the new orgId claim without
+  // a sign-out/in. No dashboard-local effect needed.
 
   if (loading || profile.loading || orgStatus.loading) {
     return (
@@ -110,10 +99,17 @@ export default function Dashboard() {
       <ProfileCard orgRecord={orgRecord} />
 
       {isActive && orgId && (
-        <div className="dashboard-bento">
-          <RecommendedTicketsList orgId={orgId} />
-          <ActiveTicketsList orgId={orgId} />
-        </div>
+        <>
+          <div className="row" style={{ justifyContent: "flex-start" }}>
+            <Link href="/tickets/new" className="btn btn-primary">
+              Raise a ticket
+            </Link>
+          </div>
+          <div className="dashboard-bento">
+            <RecommendedTicketsList orgId={orgId} />
+            <ActiveTicketsList orgId={orgId} />
+          </div>
+        </>
       )}
     </div>
   );

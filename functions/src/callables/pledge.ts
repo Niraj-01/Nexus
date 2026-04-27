@@ -3,13 +3,25 @@ import * as admin from "firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { PledgeInputSchema } from "../lib/schemas";
 import { withIdempotency } from "../lib/idempotency";
+import { reserveInventory } from "../lib/inventory";
 
 /**
- * Pledge to a ticket need. Single PLEDGE_FIRST path for both NORMAL and
- * EMERGENCY tickets in the demo cut — Flow A AGREEMENT_FIRST (Google Docs
- * chain) is deferred per List.md §2.3. Single transaction commits the
- * contribution, bumps need + ticket progress, and denormalizes the
- * participantOrgIds + contributorCount aggregates.
+ * Pledge to a ticket need. Single PLEDGE_FIRST path; Flow A AGREEMENT_FIRST
+ * deferred per List.md §2.3.
+ *
+ * The server is the source of truth — the contributor names a `resourceId`
+ * and a `quantity`; everything else (offered.kind, unit, valuationINR,
+ * pctOfNeed) is derived from the resource doc inside the transaction. This
+ * closes V1–V7 in the audit (resource ownership, inventory cap, emergency
+ * gating, valuation inflation, status, availability window).
+ *
+ * Status assignment depends on rapid:
+ *   ticket.rapid === true   → status='COMMITTED', inventory reserved now,
+ *                             progressPct bumped, host has no veto
+ *                             (emergency: speed > consent)
+ *   ticket.rapid === false  → status='PROPOSED', no inventory change yet,
+ *                             progressPct unchanged. Host calls
+ *                             respondToPledge to APPROVE/REJECT.
  *
  * App Check disabled for demo (no site key wired client-side); add back
  * post-demo. Idempotent via `withIdempotency`.
@@ -33,8 +45,6 @@ export const pledge = onCall({ cors: true }, async (request) => {
   return withIdempotency(uid, input.requestId, async () => {
     const db = admin.firestore();
 
-    // Verify org is ACTIVE before entering the txn (cheap pre-check; the txn
-    // re-reads the ticket but not the org — that's fine, ACTIVE rarely toggles).
     const orgSnap = await db.collection("organizations").doc(orgId).get();
     if (!orgSnap.exists || orgSnap.data()!.status !== "ACTIVE") {
       throw new HttpsError(
@@ -45,14 +55,24 @@ export const pledge = onCall({ cors: true }, async (request) => {
 
     const ticketRef = db.collection("tickets").doc(input.ticketId);
     const contributionsRef = ticketRef.collection("contributions");
+    const resourceRef = db.collection("resources").doc(input.resourceId);
 
     return db.runTransaction(async (tx) => {
-      const ticketSnap = await tx.get(ticketRef);
+      // ── Reads (all reads must precede any writes in a Firestore txn) ──
+      const [ticketSnap, resourceSnap] = await Promise.all([
+        tx.get(ticketRef),
+        tx.get(resourceRef),
+      ]);
       if (!ticketSnap.exists) {
         throw new HttpsError("not-found", "Ticket not found.");
       }
+      if (!resourceSnap.exists) {
+        throw new HttpsError("not-found", "Resource not found.");
+      }
       const ticket = ticketSnap.data()!;
+      const resource = resourceSnap.data()!;
 
+      // ── Ticket-side checks ────────────────────────────────────────────
       if (ticket.hostOrgId === orgId) {
         throw new HttpsError(
           "failed-precondition",
@@ -71,75 +91,172 @@ export const pledge = onCall({ cors: true }, async (request) => {
         throw new HttpsError("out-of-range", "needIndex out of range.");
       }
       const need = needs[input.needIndex];
-      if (need.resourceCategory !== input.offered.kind) {
+
+      // ── Resource-side checks (V1, V2, V5, V6, V7) ─────────────────────
+      if (resource.orgId !== orgId) {
+        throw new HttpsError(
+          "permission-denied",
+          "You can only pledge resources owned by your org.",
+        );
+      }
+      if (resource.status !== "AVAILABLE") {
+        throw new HttpsError(
+          "failed-precondition",
+          `Resource is ${resource.status}, not AVAILABLE.`,
+        );
+      }
+      if (resource.category !== need.resourceCategory) {
         throw new HttpsError(
           "invalid-argument",
-          `Offered kind '${input.offered.kind}' does not match need category '${need.resourceCategory}'.`,
+          `Resource category '${resource.category}' does not match need category '${need.resourceCategory}'.`,
         );
       }
-
-      // Reject double-pledge from the same org on this ticket.
-      const existing = await tx.get(
-        contributionsRef.where("contributorOrgId", "==", orgId),
-      );
-      if (!existing.empty) {
+      const availableUntil = Number(resource.terms?.availableUntil ?? 0);
+      const ticketDeadline = Number(ticket.deadline ?? 0);
+      if (availableUntil > 0 && ticketDeadline > 0 && availableUntil < ticketDeadline) {
         throw new HttpsError(
-          "already-exists",
-          "Your org has already pledged to this ticket.",
+          "failed-precondition",
+          "Resource availability window ends before the ticket deadline.",
+        );
+      }
+      const resQty = Number(resource.quantity ?? 0);
+      const resReserved = Number(resource.reservedQuantity ?? 0);
+      const free = resQty - resReserved;
+      if (input.quantity > free) {
+        throw new HttpsError(
+          "failed-precondition",
+          `Resource has only ${free} units available (you asked for ${input.quantity}).`,
         );
       }
 
-      // ── Compute new state ─────────────────────────────────────────────
-      const needQty = Number(need.quantity ?? 0);
-      const offeredQty = Number(input.offered.quantity);
-      const pctAdded = needQty > 0 ? (offeredQty / needQty) * 100 : 0;
-      const newNeedPct = Math.min(100, Number(need.progressPct ?? 0) + pctAdded);
+      // Rapid-only checks (V5).
+      if (ticket.rapid === true) {
+        const ec = resource.emergencyContract ?? {};
+        if (ec.enabled !== true) {
+          throw new HttpsError(
+            "failed-precondition",
+            "Resource is not flagged for emergency contracts; cannot be pledged on a rapid ticket.",
+          );
+        }
+        const cats: string[] = Array.isArray(ec.emergencyCategories) ? ec.emergencyCategories : [];
+        if (cats.length > 0 && !cats.includes(String(ticket.category ?? ""))) {
+          throw new HttpsError(
+            "failed-precondition",
+            `Resource emergency contract does not cover ticket category '${ticket.category}'.`,
+          );
+        }
+        const cap = Number(ec.maxQuantityPerTicket ?? 0);
+        if (cap > 0 && input.quantity > cap) {
+          throw new HttpsError(
+            "failed-precondition",
+            `Pledge exceeds resource maxQuantityPerTicket (${cap}).`,
+          );
+        }
+      }
 
-      const newNeeds = needs.map((n: typeof need, i: number) =>
-        i === input.needIndex ? { ...n, progressPct: newNeedPct } : n,
-      );
-      const totalValuation = newNeeds.reduce(
-        (a: number, n: typeof need) => a + Number(n.valuationINR ?? 0),
-        0,
-      );
-      const newProgressPct =
-        totalValuation === 0
-          ? 0
-          : Math.round(
-              (newNeeds.reduce(
-                (a: number, n: typeof need) =>
-                  a + (Number(n.progressPct ?? 0) / 100) * Number(n.valuationINR ?? 0),
-                0,
-              ) /
-                totalValuation) *
-                100,
-            );
+      // Multiple pledges from the same org on the same ticket are allowed
+      // — supports incremental partial fulfillment (e.g. pledge 50 today,
+      // 30 more next week). Inventory is the only resource-side cap.
+
+      // ── Per-need cap (closes follow-up #2) ────────────────────────────
+      // Sum the quantities of every non-REJECTED contribution already on
+      // THIS need from any contributor. PROPOSED counts toward the cap so
+      // two contributors can't simultaneously pledge the same headroom.
+      const allContribs = await tx.get(contributionsRef);
+      let alreadyPledgedOnNeed = 0;
+      for (const doc of allContribs.docs) {
+        const d = doc.data();
+        if (Number(d.needIndex ?? -1) !== input.needIndex) continue;
+        if (String(d.status ?? "") === "REJECTED") continue;
+        alreadyPledgedOnNeed += Number(d.offered?.quantity ?? 0);
+      }
+      const remainingOnNeed = Math.max(0, Number(need.quantity ?? 0) - alreadyPledgedOnNeed);
+      if (input.quantity > remainingOnNeed) {
+        throw new HttpsError(
+          "failed-precondition",
+          `This need has only ${remainingOnNeed} ${String(need.unit ?? "")} of remaining capacity (you asked for ${input.quantity}).`,
+        );
+      }
+
+      // ── Server-derived offered (closes V3, V14) ───────────────────────
+      const unitValuation = resQty > 0 ? Number(resource.valuationINR ?? 0) / resQty : 0;
+      const derivedValuation = unitValuation * input.quantity;
+      const needQty = Number(need.quantity ?? 0);
+      const pctOfNeed = needQty > 0 ? Math.min(100, (input.quantity / needQty) * 100) : 0;
+
+      const offered = {
+        kind: resource.category,
+        quantity: input.quantity,
+        unit: String(resource.unit ?? ""),
+        valuationINR: derivedValuation,
+        pctOfNeed,
+        notes: input.notes ?? "",
+      };
+
+      const isRapid = ticket.rapid === true;
+      const status = isRapid ? "COMMITTED" : "PROPOSED";
+
+      // For rapid: reserve inventory NOW. The reserveInventory helper does
+      // its own tx.get on the resource doc — this must happen BEFORE any
+      // writes in the transaction, so call it before tx.set below.
+      if (isRapid) {
+        await reserveInventory(tx, input.resourceId, input.quantity);
+      }
 
       // ── Writes ────────────────────────────────────────────────────────
       const now = Date.now();
       const contributionRef = contributionsRef.doc();
-      tx.set(contributionRef, {
+      const contributionDoc: Record<string, unknown> = {
         contributorOrgId: orgId,
-        resourceId: input.resourceId ?? null,
+        resourceId: input.resourceId,
         needIndex: input.needIndex,
-        offered: input.offered,
-        status: "COMMITTED",
+        offered,
+        status,
         commitPath: "PLEDGE_FIRST",
         requestId: input.requestId,
         createdAt: now,
-        committedAt: now,
-      });
+      };
+      if (isRapid) contributionDoc.committedAt = now;
+      tx.set(contributionRef, contributionDoc);
 
-      tx.update(ticketRef, {
-        needs: newNeeds,
-        progressPct: newProgressPct,
-        contributorCount: FieldValue.increment(1),
-        participantOrgIds: FieldValue.arrayUnion(orgId),
-        lastUpdatedAt: now,
-      });
+      let newProgressPct = Number(ticket.progressPct ?? 0);
+      if (isRapid) {
+        const newNeedPct = Math.min(100, Number(need.progressPct ?? 0) + pctOfNeed);
+        const newNeeds = needs.map((n: typeof need, i: number) =>
+          i === input.needIndex ? { ...n, progressPct: newNeedPct } : n,
+        );
+        const totalValuation = newNeeds.reduce(
+          (a: number, n: typeof need) => a + Number(n.valuationINR ?? 0),
+          0,
+        );
+        newProgressPct =
+          totalValuation === 0
+            ? 0
+            : Math.round(
+                (newNeeds.reduce(
+                  (a: number, n: typeof need) =>
+                    a +
+                    (Number(n.progressPct ?? 0) / 100) * Number(n.valuationINR ?? 0),
+                  0,
+                ) /
+                  totalValuation) *
+                  100,
+              );
+
+        tx.update(ticketRef, {
+          needs: newNeeds,
+          progressPct: newProgressPct,
+          contributorCount: FieldValue.increment(1),
+          participantOrgIds: FieldValue.arrayUnion(orgId),
+          lastUpdatedAt: now,
+        });
+      } else {
+        tx.update(ticketRef, { lastUpdatedAt: now });
+      }
 
       return {
         contributionId: contributionRef.id,
+        status,
         progressPct: newProgressPct,
       };
     });

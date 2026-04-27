@@ -6,16 +6,18 @@ import { withIdempotency } from "../lib/idempotency";
 /**
  * Contributor records APPROVED or DISPUTED on a PENDING_SIGNOFF ticket.
  * Single transaction:
- *   - Confirms the caller's org has a contribution on this ticket whose
- *     status is EXECUTED (proves Step 4 ran for them).
- *   - Rejects double-signoff (one signoff per contributor per ticket).
+ *   - Confirms the caller's org has at least one EXECUTED contribution on
+ *     this ticket (proves Step 4 ran for them).
+ *   - Rejects double-signoff (one signoff per contributor per ticket — keyed
+ *     deterministically as `${ticketId}__${orgId}` for idempotency).
  *   - Writes the signoff doc.
- *   - APPROVED → flips contribution EXECUTED → SIGNED_OFF (+ signedOffAt).
- *   - DISPUTED → flips contribution EXECUTED → DISPUTED.
+ *   - APPROVED → flips EVERY EXECUTED contribution from this contributor
+ *     to SIGNED_OFF (+ signedOffAt). Supports incremental pledges where a
+ *     contributor pledged multiple times on the same ticket.
+ *   - DISPUTED → flips EVERY EXECUTED contribution to DISPUTED.
  *
  * `onSignoffRecorded` runs after this and decides whether the ticket can
- * close (all contributors APPROVED, none DISPUTED). App Check disabled for
- * demo (no site key wired client-side); add back post-demo. Idempotent via
+ * close (all contributors APPROVED, none DISPUTED). Idempotent via
  * `withIdempotency`.
  */
 export const recordSignoff = onCall({ cors: true }, async (request) => {
@@ -38,7 +40,9 @@ export const recordSignoff = onCall({ cors: true }, async (request) => {
     const db = admin.firestore();
     const ticketRef = db.collection("tickets").doc(input.ticketId);
     const contributionsRef = ticketRef.collection("contributions");
-    const signoffsRef = ticketRef.collection("signoffs");
+    // Deterministic doc id keeps signoffs idempotent and matches how
+    // onSignoffRecorded counts contributors as a Set keyed by orgId.
+    const signoffRef = ticketRef.collection("signoffs").doc(`${input.ticketId}__${orgId}`);
 
     return db.runTransaction(async (tx) => {
       const ticketSnap = await tx.get(ticketRef);
@@ -54,24 +58,20 @@ export const recordSignoff = onCall({ cors: true }, async (request) => {
         );
       }
 
-      const myContribs = await tx.get(
+      const myExecuted = await tx.get(
         contributionsRef
           .where("contributorOrgId", "==", orgId)
-          .where("status", "==", "EXECUTED")
-          .limit(1),
+          .where("status", "==", "EXECUTED"),
       );
-      if (myContribs.empty) {
+      if (myExecuted.empty) {
         throw new HttpsError(
           "failed-precondition",
           "No EXECUTED contribution found for your org on this ticket.",
         );
       }
-      const contribDoc = myContribs.docs[0];
 
-      const existingSignoff = await tx.get(
-        signoffsRef.where("contributorOrgId", "==", orgId).limit(1),
-      );
-      if (!existingSignoff.empty) {
+      const existingSignoff = await tx.get(signoffRef);
+      if (existingSignoff.exists) {
         throw new HttpsError(
           "already-exists",
           "Your org has already signed off on this ticket.",
@@ -79,7 +79,6 @@ export const recordSignoff = onCall({ cors: true }, async (request) => {
       }
 
       const now = Date.now();
-      const signoffRef = signoffsRef.doc();
       tx.set(signoffRef, {
         contributorOrgId: orgId,
         decision: input.decision,
@@ -88,15 +87,17 @@ export const recordSignoff = onCall({ cors: true }, async (request) => {
       });
 
       const newStatus = input.decision === "APPROVED" ? "SIGNED_OFF" : "DISPUTED";
-      const contribUpdate: Record<string, unknown> = { status: newStatus };
-      if (input.decision === "APPROVED") {
-        contribUpdate.signedOffAt = now;
+      for (const contribDoc of myExecuted.docs) {
+        const contribUpdate: Record<string, unknown> = { status: newStatus };
+        if (input.decision === "APPROVED") {
+          contribUpdate.signedOffAt = now;
+        }
+        tx.update(contribDoc.ref, contribUpdate);
       }
-      tx.update(contribDoc.ref, contribUpdate);
 
       tx.update(ticketRef, { lastUpdatedAt: now });
 
-      return { signoffId: signoffRef.id };
+      return { signoffId: signoffRef.id, contributionsAffected: myExecuted.size };
     });
   });
 });

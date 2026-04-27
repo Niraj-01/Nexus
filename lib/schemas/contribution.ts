@@ -25,7 +25,9 @@ export const OfferedSchema = z.object({
 
 export const ContributionSchema = z.object({
   contributorOrgId: z.string(),
-  resourceId: z.string().optional(),
+  // Required: every pledge must reference a resource doc owned by the
+  // contributor org. Enforced server-side in pledge.ts.
+  resourceId: z.string().min(1),
   needIndex: z.number().int().nonnegative(),
   offered: OfferedSchema,
   status: ContributionStatus,
@@ -35,15 +37,33 @@ export const ContributionSchema = z.object({
   createdAt: z.number().int(),
   committedAt: z.number().int().optional(),
   signedOffAt: z.number().int().optional(),
+  rejectedAt: z.number().int().optional(),
+  rejectReason: z.string().max(500).optional(),
 });
 export type Contribution = z.infer<typeof ContributionSchema>;
 
-/** Client input for /pledge — server sets status, commitPath, timestamps. */
+/**
+ * Client input for /pledge. The contributor names a resource and a quantity;
+ * the server derives `kind`, `unit`, `valuationINR`, and `pctOfNeed` from
+ * the referenced `resources/{resourceId}` doc. This kills the inflate-the-
+ * progress-bar attack (V3, V14 in the audit).
+ */
 export const PledgeInputSchema = z.object({
   ticketId: z.string(),
-  resourceId: z.string().optional(),
+  resourceId: z.string().min(1),
   needIndex: z.number().int().nonnegative(),
-  offered: OfferedSchema,
+  quantity: z.number().positive(),
+  notes: z.string().max(1000).default(""),
   requestId: z.string().min(8),
 });
 export type PledgeInput = z.infer<typeof PledgeInputSchema>;
+
+/** Host APPROVE/REJECT input for a PROPOSED contribution. */
+export const RespondToPledgeInputSchema = z.object({
+  ticketId: z.string().min(1),
+  contributionId: z.string().min(1),
+  decision: z.enum(["APPROVE", "REJECT"]),
+  note: z.string().max(500).default(""),
+  requestId: z.string().min(8),
+});
+export type RespondToPledgeInput = z.infer<typeof RespondToPledgeInputSchema>;
